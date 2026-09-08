@@ -1,10 +1,7 @@
 """7:00 PM CT history Reel job.
 
-V1 (this file): pick a real YouTube clip in the underground lane,
-write credits, post the pick to #admin-general. Does NOT publish to IG.
-
-V2: download full video if it already fits IG Reels; auto-trim if longer.
-Sources later: YouTube + IG + TikTok.
+V1: pick a real YouTube clip, write a fact-heavy caption,
+post the pick to #admin-general. Does NOT publish to IG.
 """
 from __future__ import annotations
 
@@ -25,7 +22,6 @@ ADMIN_CHANNEL_ID = os.getenv("DISCORD_ADMIN_CHANNEL_ID", "1542355862079807509")
 USED_FILE = os.getenv("REELS_USED_FILE", "/tmp/808_reels_used.json")
 CT = ZoneInfo("America/Chicago")
 
-# IG Graph Reels cap. Full source if under this; trim if over.
 IG_REEL_MAX_SEC = int(os.getenv("IG_REEL_MAX_SEC", "90"))
 IG_REEL_MIN_SEC = 5
 
@@ -42,6 +38,23 @@ QUERY_SHAPES = [
     "{artist} documentary",
     "{artist} making of",
 ]
+
+CAPTION_SYSTEM = """You write 808 Dystopia IG Reel captions.
+Voice: underground media, specific, not corporate, not generic hype.
+
+Required shape (5-8 short lines):
+1. Hook that says WHERE this is and WHAT is happening.
+2. One or two real details from title, description, tags, date, or quotes if present.
+3. Why the clip matters for underground rap/history (one line, no fluff).
+4. Artist: Name
+5. Source: Channel — full URL
+6. Follow for more.
+
+Rules:
+- Only facts in the payload. If you do not have a quote or date, skip it. Never invent tours, labels, chart numbers, or lore.
+- Name every featured artist/producer visible in the title.
+- No hashtag dump. No emoji walls. No "don't miss this".
+"""
 
 
 def execute(slug, arguments):
@@ -143,6 +156,7 @@ def pick_clip():
             sn = item.get("snippet") or {}
             cd = item.get("contentDetails") or {}
             st = item.get("status") or {}
+            stats = item.get("statistics") or {}
             if st.get("privacyStatus") and st.get("privacyStatus") != "public":
                 continue
             seconds = parse_iso_duration(cd.get("duration"))
@@ -159,7 +173,10 @@ def pick_clip():
                 "url": f"https://www.youtube.com/watch?v={vid}",
                 "title": title,
                 "channel": sn.get("channelTitle") or "",
-                "description": (sn.get("description") or "")[:400],
+                "description": (sn.get("description") or "")[:800],
+                "published_at": sn.get("publishedAt") or "",
+                "tags": (sn.get("tags") or [])[:12],
+                "views": stats.get("viewCount"),
                 "seconds": seconds,
                 "trim": bool(seconds and seconds > IG_REEL_MAX_SEC),
             }
@@ -169,6 +186,7 @@ def pick_clip():
 def draft_caption(pick):
     fallback = (
         f"{pick['title']}\n"
+        f"A {pick.get('seconds') or '?'}s clip from {pick['channel']}.\n"
         f"Artist: {pick['artist']}\n"
         f"Source: {pick['channel']} — {pick['url']}\n"
         f"Follow for more."
@@ -180,22 +198,19 @@ def draft_caption(pick):
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {
-                    "role": "system",
-                    "content": "You write 808 Dystopia IG Reel captions. Only real facts from the given title/channel/description. Credit artist and source. No invented history. 2-5 short lines. End with Follow for more. No hashtag dump.",
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps(pick, default=str),
-                },
+                {"role": "system", "content": CAPTION_SYSTEM},
+                {"role": "user", "content": json.dumps(pick, default=str)},
             ],
+            temperature=0.7,
         )
         text = (resp.choices[0].message.content or "").strip()
         if pick["artist"].lower() not in text.lower():
             text = f"Artist: {pick['artist']}\n{text}"
+        if pick["channel"] and pick["channel"].lower() not in text.lower():
+            text = text + f"\nSource: {pick['channel']} — {pick['url']}"
         if "follow for more" not in text.lower():
             text = text + "\nFollow for more."
-        return text[:500]
+        return text[:900]
     except Exception as e:
         print(f"caption: {e}", flush=True)
         return fallback
