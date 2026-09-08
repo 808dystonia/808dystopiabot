@@ -14,11 +14,21 @@ import carousel
 from carousel_cover import pick_official_cover
 from genius_pull import genius_brief
 from carousel_slides import render_slide2_single, render_slide2_tracks
+from carousel_outro import publish_with_outro
 
 carousel.lookup_artist_image = lambda q, a="", t="": pick_official_cover(a or q, t or a or q)
 carousel.fetch_brief = genius_brief
 carousel.render_slide2_single = render_slide2_single
 carousel.render_slide2_tracks = render_slide2_tracks
+
+
+def _publish(urls, text):
+    mid, outro = publish_with_outro(urls, text)
+    print(f"outro slide3 {outro} media={mid}", flush=True)
+    return mid
+
+
+carousel.publish_carousel = _publish
 from carousel import run_carousel_job
 
 SITE = os.getenv("RENDER_EXTERNAL_URL", "https://eight08dystopiabot.onrender.com")
@@ -41,7 +51,7 @@ if __name__ == "__main__":
     schedule.every(10).minutes.do(ingest_admin_videos)
     schedule.every(10).minutes.do(process_drive_reels)
     schedule.every(5).minutes.do(keepalive)
-    print("808 bot up — carousel 09:00 big type + Genius + official cover", flush=True)
+    print("808 bot up — carousel 09:00 cover+genius+big type+outro", flush=True)
     keepalive()
     while True:
         schedule.run_pending()
