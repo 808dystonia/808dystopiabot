@@ -74,9 +74,9 @@ def search_youtube_for_rap():
         response = composio_toolset.execute_tool_calls(
             tool_calls=[{
                 "function": {
-                    "name": "YOUTUBE_SEARCH",
+                    "name": "YOUTUBE_SEARCH_YOU_TUBE",
                     "arguments": {
-                        "query": query,
+                        "q": query,
                         "maxResults": 10,
                         "type": "video",
                     },
@@ -86,12 +86,15 @@ def search_youtube_for_rap():
 
         items = []
         if isinstance(response, dict):
-            items = response.get("items") or []
+            data = response.get("data") or response
+            items = data.get("items") or []
         elif isinstance(response, list):
             for entry in response:
-                if isinstance(entry, dict) and entry.get("items"):
-                    items = entry["items"]
-                    break
+                if isinstance(entry, dict):
+                    data = entry.get("data") or entry
+                    if data.get("items"):
+                        items = data["items"]
+                        break
 
         for item in items:
             snippet = item.get("snippet", {})
@@ -104,6 +107,7 @@ def search_youtube_for_rap():
             thumbnails = snippet.get("thumbnails", {})
             cover_url = (
                 thumbnails.get("high", {}).get("url")
+                or thumbnails.get("medium", {}).get("url")
                 or thumbnails.get("default", {}).get("url")
             )
             if cover_url:
@@ -112,7 +116,7 @@ def search_youtube_for_rap():
                     "album": album[:50],
                     "cover_url": cover_url,
                     "year": "2024",
-                    "video_id": item.get("id", {}).get("videoId", ""),
+                    "video_id": (item.get("id") or {}).get("videoId", ""),
                 }
 
         print("YouTube search returned nothing, using backup list...")
@@ -173,8 +177,11 @@ def post_to_pinterest(album, description):
                         "board_id": BOARD_ID,
                         "title": f"{album['artist']} - {album['album']}",
                         "description": description,
-                        "image_url": image_url,
                         "link": SITE_URL,
+                        "media_source": {
+                            "source_type": "image_url",
+                            "url": image_url,
+                        },
                     },
                 }
             }]
