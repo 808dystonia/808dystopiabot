@@ -1,4 +1,4 @@
-"""9:00 AM CT IG news carousel on Render. Layout lock = Discord TEST v5."""
+"""9:00 AM CT IG news carousel. v5 layout. Albums = tracklist. Singles = context slide."""
 from __future__ import annotations
 
 import json
@@ -98,6 +98,23 @@ def fill_width(draw, text, max_w, lo=48, hi=180):
     return font(lo)
 
 
+def wrap_text(draw, text, fnt, max_w):
+    words = (text or "").split()
+    lines, cur = [], ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        box = draw.textbbox((0, 0), trial, font=fnt)
+        if box[2] - box[0] <= max_w:
+            cur = trial
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
 def template():
     path = WORKDIR / "news_template.png"
     if not path.exists():
@@ -140,8 +157,7 @@ def render_slide1(artist, hook, photo: Image.Image):
     draw.rectangle((nx, ny, nx + nw, ny + nh), fill="black", outline="white", width=3)
     draw.text((nx + 14, ny + 4), badge, font=bf, fill="white")
     draw.rectangle((0, TEXT_TOP, W, FOOTER_TOP), fill="black")
-    name = artist.upper()
-    hook_u = hook.upper()
+    name, hook_u = artist.upper(), hook.upper()
     fa = fill_width(draw, name, 1044, 80, 180)
     ba = draw.textbbox((0, 0), name, font=fa)
     fh = fill_width(draw, hook_u, 1032, 70, 140)
@@ -155,7 +171,7 @@ def render_slide1(artist, hook, photo: Image.Image):
     return out
 
 
-def render_slide2(title, tracks, photo: Image.Image, source=""):
+def render_slide2_tracks(title, tracks, photo: Image.Image, source=""):
     base = template()
     draw = ImageDraw.Draw(base)
     draw.rectangle((0, 0, W, FOOTER_TOP), fill="black")
@@ -167,7 +183,7 @@ def render_slide2(title, tracks, photo: Image.Image, source=""):
     draw.rectangle((36, tb[3] + 66, 380, tb[3] + 72), fill=RED)
     body, featf = font(24), font(16)
     start_y = tb[3] + 90
-    split = 9 if len(tracks) > 11 else len(tracks)
+    split = 9 if len(tracks) > 11 else max(len(tracks), 1)
     for i, track in enumerate(tracks[:18], 1):
         if isinstance(track, str):
             name, feat = track, ""
@@ -181,14 +197,55 @@ def render_slide2(title, tracks, photo: Image.Image, source=""):
         if feat:
             nb = draw.textbbox((0, 0), name.upper()[:22], font=body)
             draw.text((x + 50 + nb[2] - nb[0] + 6, y + 3), f"FEAT. {feat.upper()[:16]}", font=featf, fill=RED)
-    thumb = cover_fill(photo, 280, 280)
-    base.paste(thumb, (760, 24))
+    base.paste(cover_fill(photo, 280, 280), (760, 24))
     draw.text((760, 310), "COVER ART", font=font(16), fill="#888888")
     if source:
         draw.text((36, 1148), source.upper()[:48], font=font(18), fill="#888888")
     out = WORKDIR / "slide2.jpg"
     base.save(out, quality=93)
     return out
+
+
+def render_slide2_single(title, brief, photo: Image.Image, source=""):
+    base = template()
+    draw = ImageDraw.Draw(base)
+    draw.rectangle((0, 0, W, FOOTER_TOP), fill="black")
+    ttl = title.upper()
+    ft = fill_width(draw, ttl, 680, 50, 110)
+    draw.text((36, 20), ttl, font=ft, fill="white")
+    tb = draw.textbbox((0, 0), ttl, font=ft)
+    draw.text((36, tb[3] + 24), "SINGLE", font=font(28), fill=RED)
+    draw.rectangle((36, tb[3] + 60, 220, tb[3] + 66), fill=RED)
+    y = tb[3] + 90
+    quote = (brief.get("quote") or "").strip()
+    if quote:
+        if not quote.startswith('"'):
+            quote = f'"{quote.strip(chr(34))}"'
+        qf = font(28)
+        for line in wrap_text(draw, quote.upper(), qf, 700):
+            draw.text((36, y), line, font=qf, fill="white")
+            y += 40
+        y += 12
+    body = font(26)
+    for para in brief.get("lines") or []:
+        for line in wrap_text(draw, str(para).upper(), body, 700):
+            draw.text((36, y), line, font=body, fill="#DDDDDD")
+            y += 36
+        y += 8
+    base.paste(cover_fill(photo, 280, 280), (760, 24))
+    draw.text((760, 310), "COVER ART", font=font(16), fill="#888888")
+    if source:
+        draw.text((36, 1148), source.upper()[:48], font=font(18), fill="#888888")
+    out = WORKDIR / "slide2.jpg"
+    base.save(out, quality=93)
+    return out
+
+
+def looks_single(item, tracks):
+    blob = f"{item.get('line','')} {item.get('title','')}".lower()
+    if any(w in blob for w in ("single", "diss", "video out", "surprise-dropped")):
+        return True
+    return len(tracks) <= 1
 
 
 def fetch_tracks(artist, title):
@@ -199,10 +256,7 @@ def fetch_tracks(artist, title):
         resp = llm.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {
-                    "role": "system",
-                    "content": "Return ONLY JSON list of real tracks: [{\"name\":\"\",\"feat\":\"\"}]. feat empty if none. No invented songs.",
-                },
+                {"role": "system", "content": 'Return ONLY JSON: [{"name":"","feat":""}]. No invented songs. If it is a single return one item.'},
                 {"role": "user", "content": f"Official tracklist for {artist} - {title}"},
             ],
         )
@@ -220,6 +274,38 @@ def fetch_tracks(artist, title):
     except Exception as e:
         print(f"tracks: {e}", flush=True)
         return [{"name": title, "feat": ""}]
+
+
+def fetch_brief(item):
+    llm = get_llm_client()
+    fallback = {"quote": "", "lines": [item.get("line") or item["title"]], "caption": item.get("line") or ""}
+    if not llm:
+        return fallback
+    try:
+        resp = llm.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": '808 news. Return ONLY JSON {"quote":"short real lyric or empty","lines":["fact","fact"],"caption":"4-6 sentence caption"}. No fake lyrics. If diss/context is reported, say it. End caption with Credit ARTIST then Follow for more.',
+                },
+                {"role": "user", "content": f"{item['artist']} {item['title']}\n{item.get('line','')}"},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        data = json.loads(raw)
+        lines = [str(x)[:80] for x in (data.get("lines") or [])][:6]
+        cap = str(data.get("caption") or fallback["caption"])[:900]
+        if "follow for more" not in cap.lower():
+            cap += "\nFollow for more."
+        if item["artist"].lower() not in cap.lower():
+            cap += f"\nCredit {item['artist']}"
+        return {"quote": str(data.get("quote") or "")[:80], "lines": lines or fallback["lines"], "caption": cap}
+    except Exception as e:
+        print(f"brief: {e}", flush=True)
+        return fallback
 
 
 def host_image(path: Path):
@@ -283,10 +369,6 @@ def pick_article():
     return None, None
 
 
-def caption(item):
-    return f"{item['line']}\n\nCredit {item['artist']}\nFollow for more."[:900]
-
-
 def publish_carousel(urls, text):
     children = []
     for url in urls:
@@ -333,9 +415,14 @@ def run_carousel_job():
     tracks = fetch_tracks(item["artist"], item["title"])
     hook = f'DROPS "{item["title"]}"'
     s1 = render_slide1(item["artist"], hook, photo)
-    s2 = render_slide2(item["title"], tracks, photo, source="SOURCE: HEAT")
+    if looks_single(item, tracks):
+        brief = fetch_brief(item)
+        s2 = render_slide2_single(item["title"], brief, photo, source="SOURCE: HEAT")
+        cap = brief.get("caption") or item["line"]
+    else:
+        s2 = render_slide2_tracks(item["title"], tracks, photo, source="SOURCE: HEAT")
+        cap = f"{item['line']}\n\nCredit {item['artist']}\nFollow for more."
     u1, u2 = host_image(s1), host_image(s2)
-    cap = caption(item)
     announce_discord(
         f"808 carousel staged {now}\n{item['artist']} — {item['title']}\n"
         f"photo: {cover.get('source')}\n{u1}\n{u2}\n\n{cap}\n\npublish={'ON' if PUBLISH else 'OFF'}"
@@ -345,7 +432,7 @@ def run_carousel_job():
     used.add(slugify(item["artist"]))
     save_used(used)
     if PUBLISH:
-        mid = publish_carousel([u1, u2], cap)
+        mid = publish_carousel([u1, u2], cap[:900])
         announce_discord(f"808 carousel live media_id={mid}")
     return item
 
