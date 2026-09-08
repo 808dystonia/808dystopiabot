@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -12,6 +13,10 @@ OUTRO_ID = os.getenv("CAROUSEL_OUTRO_ID", "1RXsoQs4N8OnBfNSnMM0ZykADdwA-n3Us")
 WORKDIR = Path("/tmp/808carousel")
 UGUU = "https://uguu.se/upload"
 IG_USER_ID = os.getenv("IG_USER_ID", "28902406756011804")
+HASHTAGS = [
+    "#808Dystopia #UndergroundRap #UndergroundHipHop #HipHopHistory",
+    "#RapNews #UnsignedArtist #IndieHipHop #ProducerLife",
+]
 
 
 def download_outro():
@@ -45,12 +50,14 @@ def host_outro():
     return url
 
 
-def _child(url, video=False):
+def _child(url, video=False, handle=""):
     args = {"ig_user_id": IG_USER_ID, "is_carousel_item": True}
     if video:
         args["video_url"] = url
     else:
         args["image_url"] = url
+        if handle:
+            args["user_tags"] = [{"username": handle, "x": 0.5, "y": 0.82}]
     created = execute_composio_tool("INSTAGRAM_POST_IG_USER_MEDIA", args)
     cid = (created.get("data") or {}).get("id")
     if not cid:
@@ -58,10 +65,26 @@ def _child(url, video=False):
     return cid
 
 
-def publish_with_outro(image_urls, text):
-    children = [_child(u, video=False) for u in image_urls]
+def _wait_finished(cid, tries=24):
+    for _ in range(tries):
+        st = execute_composio_tool("INSTAGRAM_GET_POST_STATUS", {"creation_id": cid})
+        code = ((st.get("data") or {}).get("status_code") or "").upper()
+        if code == "FINISHED":
+            return
+        if code == "ERROR":
+            raise RuntimeError(f"container error {cid} {st}")
+        time.sleep(5)
+    raise RuntimeError(f"container timeout {cid}")
+
+
+def publish_with_outro(image_urls, text, handle=""):
+    children = []
+    for i, url in enumerate(image_urls):
+        children.append(_child(url, video=False, handle=handle if i == 0 else ""))
     outro = host_outro()
-    children.append(_child(outro, video=True))
+    vid = _child(outro, video=True)
+    _wait_finished(vid)
+    children.append(vid)
     parent = execute_composio_tool(
         "INSTAGRAM_POST_IG_USER_MEDIA",
         {
@@ -76,4 +99,14 @@ def publish_with_outro(image_urls, text):
         "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
         {"ig_user_id": IG_USER_ID, "creation_id": creation, "max_wait_seconds": 180},
     )
-    return (published.get("data") or {}).get("id"), outro
+    media_id = (published.get("data") or {}).get("id")
+    if media_id:
+        for batch in HASHTAGS:
+            try:
+                execute_composio_tool(
+                    "INSTAGRAM_POST_IG_MEDIA_COMMENTS",
+                    {"ig_media_id": media_id, "message": batch},
+                )
+            except Exception as e:
+                print(f"comment: {e}", flush=True)
+    return media_id, outro
