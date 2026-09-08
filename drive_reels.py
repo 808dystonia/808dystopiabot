@@ -2,6 +2,7 @@
 
 Folder: 02_Content/History Posts
 Name files like: OsamaSon_thailand.mp4
+Watermark lock: white monogram + 808 DYSTOPIA, bottom left.
 """
 from __future__ import annotations
 
@@ -21,7 +22,8 @@ COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 DRIVE_HISTORY = os.getenv("DRIVE_HISTORY_FOLDER_ID", "1lKG3gWXAnvzVVlQdO89z4VrROjHhxMNP")
-IG_USER_ID = os.getenv("IG_USER_ID", "28902406756011804")
+LOGO_FILE_ID = os.getenv("DRIVE_LOGO_FILE_ID", "18p2f3hlWQhK2tpt8Ll46B55kD_behsXi")
+LOGO_CACHE = Path(os.getenv("DRIVE_LOGO_CACHE", "/tmp/808reels/808-Dystopia_Monogram_White-on-Black.jpg"))
 SEEN_FILE = Path(os.getenv("DRIVE_REELS_SEEN", "/tmp/808_drive_reels_seen.json"))
 WORKDIR = Path("/tmp/808reels/drive")
 VIDEO_MARKERS = ("video/", ".mp4", ".mov", ".m4v", ".webm")
@@ -95,20 +97,30 @@ def download_drive(file_id, dest: Path):
     raise RuntimeError(f"no s3url in download: {str(data)[:200]}")
 
 
+def logo_path():
+    if LOGO_CACHE.exists() and LOGO_CACHE.stat().st_size > 1000:
+        return LOGO_CACHE
+    download_drive(LOGO_FILE_ID, LOGO_CACHE)
+    return LOGO_CACHE
+
+
 def watermark(src: Path, dest: Path):
+    """Bottom-left: keyed white monogram + 808 DYSTOPIA. Same lock as Slayrr v2."""
     tmp = dest.with_name(dest.stem + ".wm.tmp.mp4")
     if tmp.exists():
         tmp.unlink()
-    vf = (
-        "scale=1080:1920:force_original_aspect_ratio=increase,"
-        "crop=1080:1920,"
-        "drawtext=text='808 DYSTOPIA':fontcolor=white@0.85:fontsize=36:"
-        "x=w-tw-48:y=h-th-64:borderw=2:bordercolor=black@0.6"
-    )
+    logo = logo_path()
     cmd = [
-        "ffmpeg", "-y", "-i", str(src),
-        "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+        "ffmpeg", "-y",
+        "-i", str(src),
+        "-i", str(logo),
+        "-filter_complex",
+        "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[base];"
+        "[1:v]colorkey=0x000000:0.35:0.15,scale=160:160[lg];"
+        "[base][lg]overlay=48:H-h-56,"
+        "drawtext=text='808 DYSTOPIA':fontcolor=white@0.9:fontsize=34:"
+        "x=48+160+20:y=h-th-72:borderw=2:bordercolor=black@0.55",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-b:a", "160k",
         "-movflags", "+faststart",
         str(tmp),
