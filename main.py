@@ -5,7 +5,8 @@ import time
 import requests
 import schedule
 
-from pinterest_bot import daily_post, start_health_server
+from kicks import start_health_server
+from pinterest_bot import daily_post
 from briefing import send_brief
 from reels import run_reel_job
 from discord_ingest import ingest_admin_videos
@@ -54,7 +55,7 @@ SITE = os.getenv("RENDER_EXTERNAL_URL", "https://eight08dystopiabot.onrender.com
 
 def keepalive():
     try:
-        requests.get(SITE + "/", timeout=10)
+        requests.get(SITE + "/wake", timeout=10)
     except Exception as e:
         print(f"keepalive: {e}", flush=True)
 
@@ -69,7 +70,7 @@ if __name__ == "__main__":
     schedule.every(10).minutes.do(ingest_admin_videos)
     schedule.every(10).minutes.do(process_drive_reels)
     schedule.every(5).minutes.do(keepalive)
-    print("808 bot up — carousel @tag + outro slide 3", flush=True)
+    print("808 bot up — /run/carousel /run/pin /run/brief /run/reel", flush=True)
     keepalive()
     while True:
         schedule.run_pending()
