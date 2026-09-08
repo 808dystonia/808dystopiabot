@@ -10,6 +10,7 @@ import requests
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
+COMPOSIO_DISCORD_ACCOUNT = os.getenv("COMPOSIO_DISCORD_ACCOUNT", "discordbot_qung-whiff")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 IG_USER_ID = os.getenv("IG_USER_ID", "28902406756011804")
 ADMIN_CHANNEL_ID = os.getenv("DISCORD_ADMIN_CHANNEL_ID", "1542355862079807509")
@@ -17,10 +18,17 @@ PUBLISH_TO_IG = os.getenv("REELS_PUBLISH_TO_IG", "0") == "1"
 
 
 def execute(slug, arguments):
+    payload = {
+        "arguments": arguments or {},
+        "user_id": COMPOSIO_USER_ID,
+        "version": "latest",
+    }
+    if str(slug).upper().startswith("DISCORDBOT_"):
+        payload["connected_account_id"] = COMPOSIO_DISCORD_ACCOUNT
     resp = requests.post(
         f"{COMPOSIO_BASE}/tools/execute/{slug}",
         headers={"x-api-key": COMPOSIO_API_KEY, "Content-Type": "application/json"},
-        json={"arguments": arguments or {}, "user_id": COMPOSIO_USER_ID, "version": "latest"},
+        json=payload,
         timeout=120,
     )
     if resp.status_code >= 400:
@@ -29,7 +37,10 @@ def execute(slug, arguments):
 
 
 def announce_discord(text):
-    execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": text[:1900]})
+    try:
+        execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": text[:1900]})
+    except Exception as e:
+        print(f"announce_discord: {e}", flush=True)
 
 
 def publish_reel(video_url, caption):

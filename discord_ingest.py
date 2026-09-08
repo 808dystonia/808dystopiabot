@@ -15,6 +15,7 @@ from reel_publish import publish_reel
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
+COMPOSIO_DISCORD_ACCOUNT = os.getenv("COMPOSIO_DISCORD_ACCOUNT", "discordbot_qung-whiff")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 ADMIN_CHANNEL_ID = os.getenv("DISCORD_ADMIN_CHANNEL_ID", "1542355862079807509")
 SEEN_FILE = Path(os.getenv("DISCORD_INGEST_SEEN", "/tmp/808_discord_ingest_seen.json"))
@@ -27,7 +28,12 @@ def execute(slug, arguments):
     resp = requests.post(
         f"{COMPOSIO_BASE}/tools/execute/{slug}",
         headers={"x-api-key": COMPOSIO_API_KEY, "Content-Type": "application/json"},
-        json={"arguments": arguments or {}, "user_id": COMPOSIO_USER_ID, "version": "latest"},
+        json={
+            "arguments": arguments or {},
+            "user_id": COMPOSIO_USER_ID,
+            "connected_account_id": COMPOSIO_DISCORD_ACCOUNT,
+            "version": "latest",
+        },
         timeout=60,
     )
     if resp.status_code >= 400:
@@ -50,8 +56,12 @@ def ingest_admin_videos():
     if not COMPOSIO_API_KEY:
         print("ingest: no COMPOSIO_API_KEY", flush=True)
         return []
-    seen = load_seen()
-    raw = execute("DISCORDBOT_LIST_MESSAGES", {"channel_id": ADMIN_CHANNEL_ID, "limit": 25})
+    try:
+        seen = load_seen()
+        raw = execute("DISCORDBOT_LIST_MESSAGES", {"channel_id": ADMIN_CHANNEL_ID, "limit": 25})
+    except Exception as e:
+        print(f"ingest skip: {e}", flush=True)
+        return []
     data = raw.get("data") if isinstance(raw, dict) else {}
     messages = data.get("messages") or data.get("data") or data.get("items") or []
     if isinstance(data, list):
@@ -79,14 +89,17 @@ def ingest_admin_videos():
                 continue
             dest = WORKDIR / name
             print(f"ingest download {name}", flush=True)
-            r = requests.get(url, timeout=120)
-            r.raise_for_status()
-            dest.write_bytes(r.content)
-            cropped, _info = crop_to_916(dest, WORKDIR / f"{dest.stem}_916.mp4")
-            hosted = host_mp4(cropped)
-            publish_reel(hosted, caption if caption.strip() else f"{name}\nFollow for more.")
-            seen.add(aid)
-            saved.append(hosted)
+            try:
+                r = requests.get(url, timeout=120)
+                r.raise_for_status()
+                dest.write_bytes(r.content)
+                cropped, _info = crop_to_916(dest, WORKDIR / f"{dest.stem}_916.mp4")
+                hosted = host_mp4(cropped)
+                publish_reel(hosted, caption if caption.strip() else f"{name}\nFollow for more.")
+                seen.add(aid)
+                saved.append(hosted)
+            except Exception as e:
+                print(f"ingest file fail {name}: {e}", flush=True)
     save_seen(seen)
     return saved
 
