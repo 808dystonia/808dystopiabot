@@ -27,15 +27,13 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1",
 )
 
-# SoundCloud rage / plugg / jerk / digicore underground lane — OsamaSon, Nettspend, etc.
+# OsamaSon / Nettspend lane + closest collaborators and scene peers.
 UNDERGROUND_ARTISTS = [
-    "OsamaSon", "Nettspend", "xaviersobased", "Yhapojj", "Summrs", "Tana", "Kankan",
-    "Iayze", "Autumn!", "Yeat", "Yung Fazo", "Prettifun", "Che", "Destroy Lonely",
-    "Ken Carson", "2hollis", "Luci4", "Jane Remover", "Lucy Bedroque", "Rich Amiri",
-    "Bleood", "Izaya Tiji", "Feng", "phreshboyswag", "prettifun", "ksuuvi",
-    "Brennan Jones", "Maxon", "echstacy", "Lil Shine", "fakemink", "Yabujin",
-    "Reptilian Club Boyz", "1oneam", "tdf", "ohsxnta", "Okaymar", "wildkarduno",
-    "Smokingskul", "perc40", "Speaker Knockerz", "Nettspend 2",
+    "OsamaSon", "Nettspend", "xaviersobased", "Che", "Glokk40Spaz",
+    "Nine Vicious", "Bleood", "Pradabagshawty", "Slayr", "Molly Santana",
+    "Tezzus", "Protect", "Pz'", "ApolloRed1", "1oneam", "Ohsxnta",
+    "Okaymar", "Boolymon", "tdf", "Yhapojj", "phreshboyswag", "ksuuvi",
+    "Prettifun", "fakemink", "Feng", "EsDeeKid", "Nemzzz", "Fimiguerrero",
 ]
 
 UNDERGROUND_GENRES = [
@@ -84,7 +82,7 @@ Return ONLY valid JSON, no markdown fences, no commentary, with these exact keys
 
 Rules:
 - Artist and album MUST be real and verifiable.
-- Focus on underground, independent, or cult-classic hip-hop/rap — not mainstream pop rap.
+- Focus on the OsamaSon / Nettspend underground lane: rage, jerk, plugg, digicore, SoundCloud rap.
 - Vary the style each time."""
         response = client.chat.completions.create(
             model="deepseek-chat",
