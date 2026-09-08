@@ -11,6 +11,8 @@ from zoneinfo import ZoneInfo
 import requests
 from openai import OpenAI
 
+from carousel_tag import apply_credits
+
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
@@ -33,8 +35,9 @@ REEL_RE = re.compile(r"https?://(?:www\.)?instagram\.com/reel/([A-Za-z0-9_-]+)/?
 
 CAPTION_SYSTEM = """You write 808 Dystopia IG Reel captions.
 Voice: underground media, specific. Only facts in the payload.
-Shape: hook, one real detail, Artist, Source URL, Follow for more.
-No invented lore. No hashtag dump.
+Return ONLY JSON {"caption":"", "artist":"", "producer":""}.
+producer is the beatmaker if named in the clip context, else empty.
+No invented lore. No hashtag dump. No @ handles — we add those in code.
 """
 
 
@@ -119,11 +122,12 @@ def pick_clip():
 
 
 def draft_caption(pick):
-    fallback = (
-        f"{pick['artist']} — underground clip.\n"
-        f"Artist: {pick['artist']}\n"
-        f"Source: {pick['url']}\n"
-        f"Follow for more."
+    artist = pick.get("artist") or ""
+    producer = pick.get("producer") or ""
+    fallback = apply_credits(
+        f"{artist} — underground clip.\nSource: {pick.get('url') or '808 archive'}",
+        artist=artist,
+        producer=producer,
     )
     if not OPENAI_API_KEY:
         return fallback
@@ -137,12 +141,14 @@ def draft_caption(pick):
             ],
             temperature=0.7,
         )
-        text = (resp.choices[0].message.content or "").strip()
-        if pick["artist"].lower() not in text.lower():
-            text = f"Artist: {pick['artist']}\n{text}"
-        if "follow for more" not in text.lower():
-            text += "\nFollow for more."
-        return text[:900]
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        data = json.loads(raw) if raw.startswith("{") else {"caption": raw}
+        text = str(data.get("caption") or fallback)
+        artist = str(data.get("artist") or artist)
+        producer = str(data.get("producer") or producer)
+        return apply_credits(text, artist=artist, producer=producer)
     except Exception as e:
         print(f"caption: {e}", flush=True)
         return fallback
