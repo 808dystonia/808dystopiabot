@@ -1,7 +1,8 @@
 """7:00 PM CT history Reel job.
 
-V1: pick a real YouTube clip, write a fact-heavy caption,
-post the pick to #admin-general. Does NOT publish to IG.
+V1: pick a real YouTube clip, write a fact-heavy caption from
+metadata + transcript, post the pick to #admin-general.
+Does NOT publish to IG yet.
 """
 from __future__ import annotations
 
@@ -24,6 +25,7 @@ CT = ZoneInfo("America/Chicago")
 
 IG_REEL_MAX_SEC = int(os.getenv("IG_REEL_MAX_SEC", "90"))
 IG_REEL_MIN_SEC = 5
+PUBLISH_TO_IG = os.getenv("REELS_PUBLISH_TO_IG", "0") == "1"
 
 LANE = [
     "OsamaSon", "Nettspend", "xaviersobased", "Che", "Glokk40Spaz",
@@ -44,16 +46,18 @@ Voice: underground media, specific, not corporate, not generic hype.
 
 Required shape (5-8 short lines):
 1. Hook that says WHERE this is and WHAT is happening.
-2. One or two real details from title, description, tags, date, or quotes if present.
-3. Why the clip matters for underground rap/history (one line, no fluff).
-4. Artist: Name
-5. Source: Channel — full URL
-6. Follow for more.
+2. One or two real details from title, description, tags, date, or transcript.
+3. One short quote from the transcript if it exists (a real sentence, not paraphrased lore).
+4. Why the clip matters for underground rap (one line).
+5. Artist: Name
+6. Source: Channel — full URL
+7. Follow for more.
 
 Rules:
-- Only facts in the payload. If you do not have a quote or date, skip it. Never invent tours, labels, chart numbers, or lore.
-- Name every featured artist/producer visible in the title.
-- No hashtag dump. No emoji walls. No "don't miss this".
+- Only facts in the payload. Never invent tours, labels, chart numbers, or lore.
+- If transcript is empty, skip the quote line.
+- Name every featured artist/producer in the title.
+- No hashtag dump. No emoji walls.
 """
 
 
@@ -106,6 +110,18 @@ def parse_iso_duration(s):
             secs = int(num or 0)
             num = ""
     return hours * 3600 + mins * 60 + secs
+
+
+def fetch_transcript(video_id):
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        segs = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US"])
+        text = " ".join((s.get("text") or "").strip() for s in segs if s.get("text"))
+        text = " ".join(text.split())
+        return text[:1500]
+    except Exception as e:
+        print(f"transcript {video_id}: {e}", flush=True)
+        return ""
 
 
 def search_youtube(artist):
@@ -179,6 +195,7 @@ def pick_clip():
                 "views": stats.get("viewCount"),
                 "seconds": seconds,
                 "trim": bool(seconds and seconds > IG_REEL_MAX_SEC),
+                "transcript": fetch_transcript(vid),
             }
     return None
 
@@ -244,13 +261,19 @@ def run_reel_job():
             if dur
             else "duration unknown — probe on download"
         )
+        ig_line = (
+            "IG publish: ON"
+            if PUBLISH_TO_IG
+            else "IG publish: OFF — dry-run only. Needs hosted MP4, not a YouTube link."
+        )
         msg = (
             f"808 Reel dry-run {now}\n"
-            f"NOT posted to IG yet.\n\n"
+            f"{ig_line}\n\n"
             f"{pick['artist']} — {pick['title']}\n"
             f"Source: {pick['channel']}\n"
             f"{pick['url']}\n"
-            f"Plan: {plan}\n\n"
+            f"Plan: {plan}\n"
+            f"Transcript: {'yes' if pick.get('transcript') else 'none'}\n\n"
             f"Caption draft:\n{caption}\n\n"
             f"First comment:\n{hashtags()}"
         )

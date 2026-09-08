@@ -2,3 +2,4 @@ openai
 python-dotenv
 schedule
 requests
+youtube-transcript-api
