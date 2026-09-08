@@ -1,4 +1,4 @@
-"""Download a YouTube clip, make it Reel-safe, host a direct MP4.
+"""Download YouTube or Instagram clips with optional cookies, make Reel-safe, host MP4.
 Does not publish to Instagram.
 """
 from __future__ import annotations
@@ -12,6 +12,24 @@ import requests
 
 WORKDIR = Path(os.getenv("REEL_WORKDIR", "/tmp/808reels"))
 UGUU = os.getenv("REEL_HOST_UPLOAD", "https://uguu.se/upload")
+COOKIE_CANDIDATES = [
+    os.getenv("YTDLP_COOKIES_FILE"),
+    "/etc/secrets/youtube_cookies.txt",
+    "/etc/secrets/cookies.txt",
+    "/tmp/yt_cookies.txt",
+]
+
+
+def cookies_file():
+    raw = os.getenv("YTDLP_COOKIES")
+    if raw and "# Netscape" in raw or (raw and "youtube.com" in raw):
+        path = Path("/tmp/yt_cookies.txt")
+        path.write_text(raw)
+        return str(path)
+    for cand in COOKIE_CANDIDATES:
+        if cand and Path(cand).is_file() and Path(cand).stat().st_size > 20:
+            return cand
+    return None
 
 
 def run(cmd):
@@ -39,11 +57,22 @@ def probe(path):
     }
 
 
-def download_youtube(url, dest: Path):
+def ytdlp_base():
+    cmd = ["yt-dlp"]
+    ck = cookies_file()
+    if ck:
+        cmd += ["--cookies", ck]
+        print(f"yt-dlp cookies: {ck}", flush=True)
+    else:
+        print("yt-dlp cookies: NONE — expect 403 on many videos", flush=True)
+    return cmd
+
+
+def download_url(url, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     out = dest.with_suffix(".%(ext)s")
-    cmd = [
-        "yt-dlp",
+    base = ytdlp_base()
+    cmd = base + [
         "--extractor-args", "youtube:player_client=android,ios,web",
         "-f", "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/18/best",
         "--merge-output-format", "mp4",
@@ -53,7 +82,7 @@ def download_youtube(url, dest: Path):
     try:
         run(cmd)
     except Exception:
-        run(["yt-dlp", "-f", "18/best", "-o", str(out), url])
+        run(base + ["-f", "18/best", "-o", str(out), url])
     found = list(dest.parent.glob(dest.stem + ".*"))
     if not found:
         raise RuntimeError("yt-dlp produced no file")
@@ -74,7 +103,6 @@ def crop_to_916(src: Path, dest: Path):
     if abs(ratio - target) < 0.03:
         vf = "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2"
     elif ratio > target:
-        # too wide — center crop
         vf = "crop=ih*9/16:ih,scale=1080:1920"
     else:
         vf = "crop=iw:iw*16/9,scale=1080:1920"
@@ -111,10 +139,14 @@ def host_mp4(path: Path):
     return url
 
 
-def process_youtube(url, slug):
+def process_url(url, slug):
     WORKDIR.mkdir(parents=True, exist_ok=True)
-    raw = download_youtube(url, WORKDIR / f"{slug}_raw.mp4")
+    raw = download_url(url, WORKDIR / f"{slug}_raw.mp4")
     out = WORKDIR / f"{slug}_916.mp4"
     final, info = crop_to_916(raw, out)
     hosted = host_mp4(final)
-    return {"file": str(final), "url": hosted, "probe": info}
+    return {"file": str(final), "url": hosted, "probe": info, "source": url}
+
+
+def process_youtube(url, slug):
+    return process_url(url, slug)
