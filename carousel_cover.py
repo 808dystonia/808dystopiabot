@@ -1,9 +1,7 @@
-"""Pick the artwork that ships with the song, not a random artist photo."""
+"""Official song cover only. Spotify/Genius first. No random artist photos."""
 from __future__ import annotations
 
 from pinterest_bot import execute_composio_tool, lookup_artist_image
-
-PREFERRED = ("scdn.co", "genius.com", "mzstatic.com", "i.ibb.co")
 
 
 def _results(raw):
@@ -16,38 +14,54 @@ def _results(raw):
     return []
 
 
+def _score(hit):
+    url = (hit.get("original") or hit.get("thumbnail") or "").lower()
+    title = (hit.get("title") or "").lower()
+    source = (hit.get("source") or "").lower()
+    if not url.startswith("http"):
+        return -1
+    score = 0
+    if "scdn.co" in url:
+        score += 8
+    if "genius.com" in url or "images.genius.com" in url:
+        score += 7
+    if "mzstatic.com" in url:
+        score += 6
+    if "spotify" in source or "genius" in source:
+        score += 3
+    if "cover" in title or "single" in title:
+        score += 2
+    if any(bad in title for bad in ("pfp", "wallpaper", "concert", "live", "selfie")):
+        score -= 5
+    if "ytimg.com" in url or "tiktok" in url:
+        score -= 4
+    return score
+
+
 def pick_official_cover(artist, title):
-    query = f"{artist} {title} official cover art"
-    try:
-        raw = execute_composio_tool("COMPOSIO_SEARCH_IMAGE", {"query": query, "num": 10})
-    except Exception as e:
-        print(f"cover search: {e}", flush=True)
-        raw = {}
+    queries = [
+        f"{artist} {title} official single cover art spotify",
+        f"{artist} {title} cover site:open.spotify.com",
+        f"{artist} {title} official cover art",
+    ]
     ranked = []
-    for hit in _results(raw):
-        if not isinstance(hit, dict):
+    for q in queries:
+        try:
+            raw = execute_composio_tool("COMPOSIO_SEARCH_IMAGE", {"query": q, "num": 10})
+        except Exception as e:
+            print(f"cover search: {e}", flush=True)
             continue
-        url = hit.get("original") or hit.get("thumbnail") or ""
-        if not url.startswith("http"):
-            continue
-        host_score = 0
-        low = url.lower()
-        if "scdn.co" in low:
-            host_score = 3
-        elif "genius.com" in low or "mzstatic.com" in low:
-            host_score = 2
-        elif any(p in low for p in PREFERRED):
-            host_score = 1
-        title_l = (hit.get("title") or "").lower()
-        if "cover" in title_l:
-            host_score += 1
-        ranked.append((host_score, url, hit.get("source") or "google"))
+        for hit in _results(raw):
+            if not isinstance(hit, dict):
+                continue
+            url = hit.get("original") or hit.get("thumbnail") or ""
+            s = _score(hit)
+            if s >= 6 and url.startswith("http"):
+                ranked.append((s, url, hit.get("source") or "spotify"))
+        if ranked:
+            break
     ranked.sort(key=lambda x: -x[0])
-    if ranked and ranked[0][0] >= 2:
-        return {"ok": True, "url": ranked[0][1], "source": ranked[0][2]}
-    fallback = lookup_artist_image(f"{artist} {title} cover", artist, title)
-    if fallback.get("ok"):
-        return fallback
     if ranked:
         return {"ok": True, "url": ranked[0][1], "source": ranked[0][2]}
-    return {"ok": False, "url": "", "source": ""}
+    fallback = lookup_artist_image(f"{artist} {title} official cover", artist, title)
+    return fallback if fallback.get("ok") else {"ok": False, "url": "", "source": ""}
