@@ -1,0 +1,16 @@
+name: keepalive
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping 808dystopiabot
+        run: |
+          set -e
+          curl -fsS --max-time 30 https://eight08dystopiabot.onrender.com
