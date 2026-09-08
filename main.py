@@ -13,17 +13,12 @@ from drive_reels import process_drive_reels
 import carousel
 from carousel_cover import pick_official_cover
 from genius_pull import genius_brief
+from carousel_slides import render_slide2_single, render_slide2_tracks
 
 carousel.lookup_artist_image = lambda q, a="", t="": pick_official_cover(a or q, t or a or q)
 carousel.fetch_brief = genius_brief
-_s2 = carousel.render_slide2_single
-
-
-def _single_slide(title, brief, photo, source=""):
-    return _s2(title, brief, photo, source=brief.get("source") or "SOURCE: GENIUS")
-
-
-carousel.render_slide2_single = _single_slide
+carousel.render_slide2_single = render_slide2_single
+carousel.render_slide2_tracks = render_slide2_tracks
 from carousel import run_carousel_job
 
 SITE = os.getenv("RENDER_EXTERNAL_URL", "https://eight08dystopiabot.onrender.com")
@@ -46,7 +41,7 @@ if __name__ == "__main__":
     schedule.every(10).minutes.do(ingest_admin_videos)
     schedule.every(10).minutes.do(process_drive_reels)
     schedule.every(5).minutes.do(keepalive)
-    print("808 bot up — carousel 09:00 official cover + Genius annot", flush=True)
+    print("808 bot up — carousel 09:00 big type + Genius + official cover", flush=True)
     keepalive()
     while True:
         schedule.run_pending()
