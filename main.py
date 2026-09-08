@@ -8,6 +8,7 @@ import schedule
 from pinterest_bot import daily_post, start_health_server
 from briefing import send_brief
 from reels import run_reel_job
+from discord_ingest import ingest_admin_videos
 
 SITE = os.getenv("RENDER_EXTERNAL_URL", "https://eight08dystopiabot.onrender.com")
 
@@ -25,8 +26,9 @@ if __name__ == "__main__":
     schedule.every().day.at("09:00").do(daily_post)
     schedule.every().day.at("18:00").do(send_brief)
     schedule.every().day.at("19:00").do(run_reel_job)
+    schedule.every(10).minutes.do(ingest_admin_videos)
     schedule.every(5).minutes.do(keepalive)
-    print("808 bot up — pins 09:00, brief 18:00, reel dry-run 19:00 CT", flush=True)
+    print("808 bot up — pins 09:00, brief 18:00, reel pick 19:00, discord ingest 10 min", flush=True)
     keepalive()
     while True:
         schedule.run_pending()
