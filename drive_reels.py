@@ -1,5 +1,6 @@
 """Pull mp4s you drop in Drive History Posts, watermark, caption, post.
 Never processes the same file twice (Drive ledger + Posted folder + name).
+Watermark lock: top-left monogram + 808 DYSTOPIA.
 """
 from __future__ import annotations
 
@@ -163,6 +164,7 @@ def logo_path():
 
 
 def watermark(src: Path, dest: Path):
+    """Top-left monogram + 808 DYSTOPIA. Clear of IG Reels chrome."""
     tmp = dest.with_name(dest.stem + ".wm.tmp.mp4")
     if tmp.exists():
         tmp.unlink()
@@ -172,9 +174,9 @@ def watermark(src: Path, dest: Path):
         "-filter_complex",
         "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[base];"
         "[1:v]colorkey=0x000000:0.35:0.15,scale=160:160[lg];"
-        "[base][lg]overlay=48:H-h-56,"
+        "[base][lg]overlay=48:72,"
         "drawtext=text='808 DYSTOPIA':fontcolor=white@0.9:fontsize=34:"
-        "x=48+160+20:y=h-th-72:borderw=2:bordercolor=black@0.55",
+        "x=48+160+20:y=72+(160-th)/2:borderw=2:bordercolor=black@0.55",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
         "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", str(tmp),
     ]
