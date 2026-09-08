@@ -27,20 +27,21 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1",
 )
 
+# SoundCloud rage / plugg / jerk / digicore underground lane — OsamaSon, Nettspend, etc.
 UNDERGROUND_ARTISTS = [
-    "MIKE", "Earl Sweatshirt", "Mick Jenkins", "Billy Woods", "JPEGMAFIA",
-    "Armand Hammer", "Roc Marciano", "Boldy James", "Westside Gunn",
-    "Conway the Machine", "Ka", "Lupe Fiasco", "Aesop Rock", "El-P",
-    "Danny Brown", "Freddie Gibbs", "Vince Earl", "Navy Blue", "Pink Siifu",
-    "Zelooperz", "MIKE", "The Alchemist", "Conductor Williams", "Nicholas Craven",
-    "Rome Streetz", "Stove God Cooks", "Keefe", "Jay Electronica", "Yasiin Bey",
-    "Guilty Simpson", "Guilty Simpson", "Guilty Simpson", "Guilty Simpson",
+    "OsamaSon", "Nettspend", "xaviersobased", "Yhapojj", "Summrs", "Tana", "Kankan",
+    "Iayze", "Autumn!", "Yeat", "Yung Fazo", "Prettifun", "Che", "Destroy Lonely",
+    "Ken Carson", "2hollis", "Luci4", "Jane Remover", "Lucy Bedroque", "Rich Amiri",
+    "Bleood", "Izaya Tiji", "Feng", "phreshboyswag", "prettifun", "ksuuvi",
+    "Brennan Jones", "Maxon", "echstacy", "Lil Shine", "fakemink", "Yabujin",
+    "Reptilian Club Boyz", "1oneam", "tdf", "ohsxnta", "Okaymar", "wildkarduno",
+    "Smokingskul", "perc40", "Speaker Knockerz", "Nettspend 2",
 ]
 
 UNDERGROUND_GENRES = [
-    "Abstract Hip-Hop", "Experimental Rap", "Conscious Hip-Hop", "East Coast Rap",
-    "Detroit Rap", "Boom Bap", "Lo-Fi Hip-Hop", "Underground Rap", "Jazz Rap",
-    "Hardcore Rap", "Alternative Hip-Hop", "G-Funk", "Southern Rap", "Midwest Rap",
+    "Rage Rap", "SoundCloud Rap", "Plugg", "Pluggnb", "Jerk", "Digicore",
+    "Sigilkore", "HexD", "Krushclub", "Cloud Rap", "Underground Trap", "Rage Trap",
+    "Experimental Rap", "Underground Hip-Hop", "Opium Rap", "Mumble Rap",
 ]
 
 
@@ -112,9 +113,9 @@ Rules:
         print(f"DeepSeek concept generation failed: {e}")
         print("Falling back to backup album...")
         return random.choice([
-            {"artist": "MIKE", "album": "Disco!", "year": "2023", "genre": "Abstract Hip-Hop", "vibe": "lo-fi dreamy", "cover_prompt": ""},
-            {"artist": "Earl Sweatshirt", "album": "Some Rap Songs", "year": "2018", "genre": "Experimental Rap", "vibe": "raw and introspective", "cover_prompt": ""},
-            {"artist": "Roc Marciano", "album": "The Elephant Man's Bones", "year": "2022", "genre": "East Coast Rap", "vibe": "gritty boom bap", "cover_prompt": ""},
+            {"artist": "OsamaSon", "album": "Flex Musix", "year": "2023", "genre": "Rage Rap", "vibe": "maximalist rage, woozy and layered", "cover_prompt": ""},
+            {"artist": "Nettspend", "album": "Him", "year": "2024", "genre": "Jerk", "vibe": "deep-fried, slurry auto-tune", "cover_prompt": ""},
+            {"artist": "xaviersobased", "album": "115 & LSD", "year": "2021", "genre": "Digicore", "vibe": "chaotic, blown-out 808s", "cover_prompt": ""},
         ])
 
 
