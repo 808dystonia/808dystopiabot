@@ -13,22 +13,23 @@ from openai import OpenAI
 
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 BOARD_ID = os.getenv("PINTEREST_BOARD_ID", "1099230290240885517")
 SITE_URL = os.getenv("SITE_URL", "https://808dystopia.win")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 
-if not COMPOSIO_API_KEY:
-    raise SystemExit("Missing COMPOSIO_API_KEY. Set it in Render Environment, not in the repo.")
+_llm_client = None
 
-client = OpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url="https://api.deepseek.com/v1",
-)
+BACKUP_ALBUMS = [
+    {"artist": "OsamaSon", "album": "Flex Musix", "year": "2023", "genre": "Rage Rap", "vibe": "maximalist rage, woozy and layered", "cover_prompt": ""},
+    {"artist": "Nettspend", "album": "Him", "year": "2024", "genre": "Jerk", "vibe": "deep-fried, slurry auto-tune", "cover_prompt": ""},
+    {"artist": "xaviersobased", "album": "115 & LSD", "year": "2021", "genre": "Digicore", "vibe": "chaotic, blown-out 808s", "cover_prompt": ""},
+    {"artist": "Che", "album": "REST IN BASS", "year": "2025", "genre": "Rage Rap", "vibe": "blown-out bass", "cover_prompt": ""},
+    {"artist": "Glokk40Spaz", "album": "3vil Reflection", "year": "2024", "genre": "Rage Trap", "vibe": "dark Atlanta rage", "cover_prompt": ""},
+]
 
-# OsamaSon / Nettspend lane + closest collaborators and scene peers.
 UNDERGROUND_ARTISTS = [
     "OsamaSon", "Nettspend", "xaviersobased", "Che", "Glokk40Spaz",
     "Nine Vicious", "Bleood", "Pradabagshawty", "Slayr", "Molly Santana",
@@ -62,8 +63,23 @@ def start_health_server():
     server.serve_forever()
 
 
+def get_llm_client():
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
+    if not OPENAI_API_KEY:
+        return None
+    _llm_client = OpenAI(
+        api_key=OPENAI_API_KEY,
+        base_url="https://api.deepseek.com/v1",
+    )
+    return _llm_client
+
+
 def execute_composio_tool(slug, arguments, user_id=None):
     """Call Composio REST v3.1. Avoids the dead composio-core SDK (HTTP 410)."""
+    if not COMPOSIO_API_KEY:
+        raise RuntimeError("Missing COMPOSIO_API_KEY in Render Environment")
     url = f"{COMPOSIO_BASE}/tools/execute/{slug}"
     payload = {
         "arguments": arguments or {},
@@ -86,11 +102,15 @@ def execute_composio_tool(slug, arguments, user_id=None):
 
 
 def generate_album_concept():
-    """DeepSeek picks a real underground hip-hop/rap artist and album to feature."""
+    """Pick a real underground hip-hop/rap artist and album to feature."""
+    seed_artist = random.choice(UNDERGROUND_ARTISTS)
+    seed_genre = random.choice(UNDERGROUND_GENRES)
+    llm = get_llm_client()
+    if llm is None:
+        print("No OPENAI_API_KEY / DEEPSEEK_API_KEY. Using backup album.")
+        return random.choice(BACKUP_ALBUMS)
     try:
         print("DeepSeek selecting underground hip-hop/rap album...")
-        seed_artist = random.choice(UNDERGROUND_ARTISTS)
-        seed_genre = random.choice(UNDERGROUND_GENRES)
         prompt = f"""You are curating an underground hip-hop and rap Pinterest board.
 Pick ONE real, existing underground hip-hop or rap artist and ONE of their real albums or mixtapes.
 Seed artist hint: {seed_artist}
@@ -108,7 +128,7 @@ Rules:
 - Artist and album MUST be real and verifiable.
 - Focus on the OsamaSon / Nettspend underground lane: rage, jerk, plugg, digicore, SoundCloud rap.
 - Vary the style each time."""
-        response = client.chat.completions.create(
+        response = llm.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {
@@ -134,15 +154,10 @@ Rules:
     except Exception as e:
         print(f"DeepSeek concept generation failed: {e}")
         print("Falling back to backup album...")
-        return random.choice([
-            {"artist": "OsamaSon", "album": "Flex Musix", "year": "2023", "genre": "Rage Rap", "vibe": "maximalist rage, woozy and layered", "cover_prompt": ""},
-            {"artist": "Nettspend", "album": "Him", "year": "2024", "genre": "Jerk", "vibe": "deep-fried, slurry auto-tune", "cover_prompt": ""},
-            {"artist": "xaviersobased", "album": "115 & LSD", "year": "2021", "genre": "Digicore", "vibe": "chaotic, blown-out 808s", "cover_prompt": ""},
-        ])
+        return random.choice(BACKUP_ALBUMS)
 
 
 def is_usable_cover(url, title=""):
-    """Filter out junk: tiny thumbs, logos, non-image pages, obvious non-covers."""
     if not url or not isinstance(url, str):
         return False
     low = url.lower()
@@ -176,7 +191,6 @@ def extract_images(payload):
 
 
 def find_cover_image(concept):
-    """Search Google Images (via Composio REST) for a real underground rap album cover."""
     try:
         print("Searching Google Images for a real album cover...")
         artist = concept.get("artist", "")
@@ -219,6 +233,10 @@ def find_cover_image(concept):
 
 
 def create_description(concept):
+    fallback = f"{concept['album']} by {concept['artist']} • Underground heat. #808dystopia #undergroundrap"
+    llm = get_llm_client()
+    if llm is None:
+        return fallback
     try:
         print("Writing description...")
         prompt = f"""Write a short, hype Pinterest description for this underground rap album:
@@ -235,7 +253,7 @@ Requirements:
 - Add #808dystopia and #undergroundrap
 - Keep under 200 characters
 """
-        response = client.chat.completions.create(
+        response = llm.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {
@@ -253,7 +271,7 @@ Requirements:
         return description[:200]
     except Exception as e:
         print(f"AI description failed: {e}")
-        return f"{concept['album']} by {concept['artist']} • Underground heat. #808dystopia #undergroundrap"
+        return fallback
 
 
 def post_to_pinterest(concept, description, cover_url):
@@ -305,8 +323,13 @@ def daily_post():
 
 if __name__ == "__main__":
     threading.Thread(target=start_health_server, daemon=True).start()
+    time.sleep(0.3)
 
-    # 808 Pinterest cadence: 9:00 AM daily. Set TZ=America/Chicago on Render.
+    if not COMPOSIO_API_KEY:
+        print("WARNING: COMPOSIO_API_KEY is not set in Render Environment")
+    if not OPENAI_API_KEY:
+        print("WARNING: OPENAI_API_KEY / DEEPSEEK_API_KEY is not set. Descriptions will use the fallback template.")
+
     schedule.every().day.at("09:00").do(daily_post)
 
     print("808DYSTOPIA BOT IS RUNNING")
