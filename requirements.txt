@@ -4,3 +4,4 @@ schedule
 requests
 youtube-transcript-api
 yt-dlp
+pillow
