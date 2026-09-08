@@ -15,19 +15,37 @@ from carousel_cover import pick_official_cover
 from genius_pull import genius_brief
 from carousel_slides import render_slide2_single, render_slide2_tracks
 from carousel_outro import publish_with_outro
+from carousel_tag import apply_at, resolve_handle
 
-carousel.lookup_artist_image = lambda q, a="", t="": pick_official_cover(a or q, t or a or q)
-carousel.fetch_brief = genius_brief
-carousel.render_slide2_single = render_slide2_single
-carousel.render_slide2_tracks = render_slide2_tracks
+
+def _cover(q, a="", t=""):
+    carousel.LAST_ARTIST = a or q
+    carousel.LAST_HANDLE = resolve_handle(a or q)
+    return pick_official_cover(a or q, t or a or q)
+
+
+def _brief(item):
+    brief = genius_brief(item)
+    handle = resolve_handle(item.get("artist") or "")
+    carousel.LAST_HANDLE = handle
+    carousel.LAST_ARTIST = item.get("artist") or ""
+    brief["caption"] = apply_at(brief.get("caption") or "", handle, item.get("artist") or "")
+    return brief
 
 
 def _publish(urls, text):
-    mid, outro = publish_with_outro(urls, text)
-    print(f"outro slide3 {outro} media={mid}", flush=True)
+    handle = getattr(carousel, "LAST_HANDLE", "") or ""
+    artist = getattr(carousel, "LAST_ARTIST", "") or ""
+    text = apply_at(text, handle, artist)
+    mid, outro = publish_with_outro(urls, text, handle=handle)
+    print(f"outro slide3 {outro} @{handle} media={mid}", flush=True)
     return mid
 
 
+carousel.lookup_artist_image = _cover
+carousel.fetch_brief = _brief
+carousel.render_slide2_single = render_slide2_single
+carousel.render_slide2_tracks = render_slide2_tracks
 carousel.publish_carousel = _publish
 from carousel import run_carousel_job
 
@@ -51,7 +69,7 @@ if __name__ == "__main__":
     schedule.every(10).minutes.do(ingest_admin_videos)
     schedule.every(10).minutes.do(process_drive_reels)
     schedule.every(5).minutes.do(keepalive)
-    print("808 bot up — carousel 09:00 cover+genius+big type+outro", flush=True)
+    print("808 bot up — carousel @tag + outro slide 3", flush=True)
     keepalive()
     while True:
         schedule.run_pending()
