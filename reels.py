@@ -1,9 +1,4 @@
-"""7:00 PM CT history Reel job.
-
-V1: pick a real YouTube clip, write a fact-heavy caption from
-metadata + transcript, post the pick to #admin-general.
-Does NOT publish to IG yet.
-"""
+"""7:00 PM CT history Reel job. Pick + download + Discord stage + optional IG."""
 from __future__ import annotations
 
 import json
@@ -14,6 +9,9 @@ from zoneinfo import ZoneInfo
 
 import requests
 from openai import OpenAI
+
+from reel_media import process_url
+from reel_publish import publish_reel
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
@@ -43,21 +41,8 @@ QUERY_SHAPES = [
 
 CAPTION_SYSTEM = """You write 808 Dystopia IG Reel captions.
 Voice: underground media, specific, not corporate, not generic hype.
-
-Required shape (5-8 short lines):
-1. Hook that says WHERE this is and WHAT is happening.
-2. One or two real details from title, description, tags, date, or transcript.
-3. One short quote from the transcript if it exists (a real sentence, not paraphrased lore).
-4. Why the clip matters for underground rap (one line).
-5. Artist: Name
-6. Source: Channel — full URL
-7. Follow for more.
-
-Rules:
-- Only facts in the payload. Never invent tours, labels, chart numbers, or lore.
-- If transcript is empty, skip the quote line.
-- Name every featured artist/producer in the title.
-- No hashtag dump. No emoji walls.
+Required shape (5-8 short lines): hook, real details, optional transcript quote, why it matters, Artist, Source URL, Follow for more.
+Only facts in the payload. Never invent lore. No hashtag dump.
 """
 
 
@@ -117,8 +102,7 @@ def fetch_transcript(video_id):
         from youtube_transcript_api import YouTubeTranscriptApi
         segs = YouTubeTranscriptApi.get_transcript(video_id, languages=["en", "en-US"])
         text = " ".join((s.get("text") or "").strip() for s in segs if s.get("text"))
-        text = " ".join(text.split())
-        return text[:1500]
+        return " ".join(text.split())[:1500]
     except Exception as e:
         print(f"transcript {video_id}: {e}", flush=True)
         return ""
@@ -203,7 +187,6 @@ def pick_clip():
 def draft_caption(pick):
     fallback = (
         f"{pick['title']}\n"
-        f"A {pick.get('seconds') or '?'}s clip from {pick['channel']}.\n"
         f"Artist: {pick['artist']}\n"
         f"Source: {pick['channel']} — {pick['url']}\n"
         f"Follow for more."
@@ -223,8 +206,6 @@ def draft_caption(pick):
         text = (resp.choices[0].message.content or "").strip()
         if pick["artist"].lower() not in text.lower():
             text = f"Artist: {pick['artist']}\n{text}"
-        if pick["channel"] and pick["channel"].lower() not in text.lower():
-            text = text + f"\nSource: {pick['channel']} — {pick['url']}"
         if "follow for more" not in text.lower():
             text = text + "\nFollow for more."
         return text[:900]
@@ -242,50 +223,47 @@ def hashtags():
 
 def run_reel_job():
     now = datetime.now(CT).strftime("%a %b %d %Y %I:%M %p CT")
-    print(f"REEL PICKER {now}", flush=True)
+    print(f"REEL JOB {now}", flush=True)
     try:
         pick = pick_clip()
         if not pick:
-            msg = f"808 Reel dry-run {now}\nNo unused YouTube clip found. Skip."
-            execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": msg})
+            execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": f"808 Reel {now}\nNo unused clip. Skip."})
             return None
         caption = draft_caption(pick)
         used = load_used()
         used.add(pick["video_id"])
         save_used(used)
-        dur = pick.get("seconds")
-        plan = (
-            f"FULL {dur}s"
-            if dur and dur <= IG_REEL_MAX_SEC
-            else f"TRIM {dur}s → {IG_REEL_MAX_SEC}s"
-            if dur
-            else "duration unknown — probe on download"
+        execute(
+            "DISCORDBOT_CREATE_MESSAGE",
+            {
+                "channel_id": ADMIN_CHANNEL_ID,
+                "content": (
+                    f"808 Reel pick {now}\n"
+                    f"{pick['artist']} — {pick['title']}\n"
+                    f"{pick['url']}\n\n"
+                    f"Caption:\n{caption}\n\n"
+                    f"First comment:\n{hashtags()}\n\n"
+                    f"Grabbing mp4..."
+                )[:1900],
+            },
         )
-        ig_line = (
-            "IG publish: ON"
-            if PUBLISH_TO_IG
-            else "IG publish: OFF — dry-run only. Needs hosted MP4, not a YouTube link."
-        )
-        msg = (
-            f"808 Reel dry-run {now}\n"
-            f"{ig_line}\n\n"
-            f"{pick['artist']} — {pick['title']}\n"
-            f"Source: {pick['channel']}\n"
-            f"{pick['url']}\n"
-            f"Plan: {plan}\n"
-            f"Transcript: {'yes' if pick.get('transcript') else 'none'}\n\n"
-            f"Caption draft:\n{caption}\n\n"
-            f"First comment:\n{hashtags()}"
-        )
-        execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": msg[:1900]})
+        try:
+            media = process_url(pick["url"], pick["video_id"])
+        except Exception as e:
+            execute(
+                "DISCORDBOT_CREATE_MESSAGE",
+                {
+                    "channel_id": ADMIN_CHANNEL_ID,
+                    "content": f"808 mp4 grab failed: {e}\nAttach the file here and ingest will take it.",
+                },
+            )
+            return pick
+        publish_reel(media["url"], caption)
         return pick
     except Exception as e:
         print(f"reel job: {e}", flush=True)
         try:
-            execute(
-                "DISCORDBOT_CREATE_MESSAGE",
-                {"channel_id": ADMIN_CHANNEL_ID, "content": f"808 Reel dry-run failed: {e}"},
-            )
+            execute("DISCORDBOT_CREATE_MESSAGE", {"channel_id": ADMIN_CHANNEL_ID, "content": f"808 Reel failed: {e}"})
         except Exception:
             pass
         return None
