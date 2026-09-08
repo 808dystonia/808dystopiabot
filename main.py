@@ -12,6 +12,7 @@ from reels import run_reel_job
 from discord_ingest import ingest_admin_videos
 from drive_reels import process_drive_reels
 import carousel
+from composio_x import execute_composio_tool
 from carousel_cover import pick_official_cover
 from genius_pull import genius_brief
 from carousel_slides import render_slide2_single, render_slide2_tracks
@@ -43,6 +44,7 @@ def _publish(urls, text):
     return mid
 
 
+carousel.execute_composio_tool = execute_composio_tool
 carousel.lookup_artist_image = _cover
 carousel.fetch_brief = _brief
 carousel.render_slide2_single = render_slide2_single
