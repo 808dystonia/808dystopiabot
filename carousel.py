@@ -1,6 +1,4 @@
-"""9:00 AM CT IG news carousel on Render. No Grok.
-Type lock: Capture It (Phonto face) from Drive Fonts.
-"""
+"""9:00 AM CT IG news carousel on Render. Layout lock = Discord TEST v5."""
 from __future__ import annotations
 
 import json
@@ -14,10 +12,9 @@ from zoneinfo import ZoneInfo
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-from pinterest_bot import execute_composio_tool, lookup_artist_image
+from pinterest_bot import execute_composio_tool, get_llm_client, lookup_artist_image
 from reel_publish import announce_discord
 
-COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 HEAT_CHANNEL = os.getenv("DISCORD_HEAT_CHANNEL_ID", "1545437232142360599")
 IG_USER_ID = os.getenv("IG_USER_ID", "28902406756011804")
 PUBLISH = os.getenv("CAROUSEL_PUBLISH", "0") == "1"
@@ -25,11 +22,15 @@ USED_FILE = Path(os.getenv("CAROUSEL_USED_FILE", "/tmp/808_carousel_used.json"))
 WORKDIR = Path("/tmp/808carousel")
 CT = ZoneInfo("America/Chicago")
 W, H = 1080, 1350
+PHOTO_X, PHOTO_Y = 18, 12
+PHOTO_W, PHOTO_H = W - 36, 708
+TEXT_TOP, FOOTER_TOP = 720, 1188
 USED_SEED = ["karrahbooo", "not da 2", "lazer dim 700", "ld7"]
 NEWS_TMPL_ID = "1SmfujfYpPF20OX-hBoozPPPXQl8EZ3pl"
 FONT_FILE_ID = os.getenv("CAROUSEL_FONT_ID", "1m7Ev0SCglKj70M87QnsOpcLubXNAppzN")
 FONT_CACHE = WORKDIR / "Capture_it.ttf"
 UGUU = "https://uguu.se/upload"
+RED = "#E10600"
 HASHTAGS = [
     "#808Dystopia #UndergroundRap #UndergroundHipHop #HipHopHistory",
     "#RapNews #UnsignedArtist #IndieHipHop #ProducerLife",
@@ -75,7 +76,7 @@ def font_path():
         return None
 
 
-def font(size, bold=True):
+def font(size):
     p = font_path()
     if p:
         return ImageFont.truetype(str(p), size)
@@ -88,19 +89,13 @@ def font(size, bold=True):
     return ImageFont.load_default()
 
 
-def fit_text(draw, text, max_w, start, min_size=36):
-    size = start
-    while size >= min_size:
+def fill_width(draw, text, max_w, lo=48, hi=180):
+    for size in range(hi, lo - 1, -2):
         f = font(size)
         box = draw.textbbox((0, 0), text, font=f)
         if box[2] - box[0] <= max_w:
             return f
-        size -= 4
-    return font(min_size)
-
-
-def stroke_text(draw, xy, text, fnt, fill="white", stroke="black", width=3):
-    draw.text(xy, text, font=fnt, fill=fill, stroke_width=width, stroke_fill=stroke)
+    return font(lo)
 
 
 def template():
@@ -112,9 +107,8 @@ def template():
             print(f"template drive: {e}", flush=True)
             img = Image.new("RGB", (W, H), "black")
             img.save(path)
-            return img
-    im = Image.open(path).convert("RGBA").resize((W, H))
-    return im
+            return img.convert("RGB")
+    return Image.open(path).convert("RGB").resize((W, H))
 
 
 def fetch_photo(url):
@@ -123,55 +117,109 @@ def fetch_photo(url):
     return Image.open(BytesIO(r.content)).convert("RGB")
 
 
-def cover_box(photo: Image.Image, box=(36, 36, 1044, 690)):
-    x0, y0, x1, y1 = box
-    tw, th = x1 - x0, y1 - y0
+def cover_fill(photo: Image.Image, tw, th):
     src = photo.copy()
-    src.thumbnail((tw, th), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGB", (tw, th), (10, 10, 10))
-    canvas.paste(src, ((tw - src.width) // 2, (th - src.height) // 2))
-    return canvas
+    ratio = max(tw / src.width, th / src.height)
+    nw, nh = int(src.width * ratio), int(src.height * ratio)
+    src = src.resize((nw, nh), Image.Resampling.LANCZOS)
+    x = max(0, min((nw - tw) // 2, nw - tw))
+    y = max(0, min(int((nh - th) * 0.28), nh - th))
+    return src.crop((x, y, x + tw, y + th))
 
 
 def render_slide1(artist, hook, photo: Image.Image):
-    base = template().convert("RGB")
-    framed = cover_box(photo)
-    base.paste(framed, (36, 36))
+    base = template()
+    base.paste(cover_fill(photo, PHOTO_W, PHOTO_H), (PHOTO_X, PHOTO_Y))
     draw = ImageDraw.Draw(base)
-    name_f = fit_text(draw, artist.upper(), 1000, 118)
-    nb = draw.textbbox((0, 0), artist.upper(), font=name_f)
-    nx = (W - (nb[2] - nb[0])) // 2
-    stroke_text(draw, (nx, 760), artist.upper(), name_f, "white", "black", 4)
-    hook_f = fit_text(draw, hook.upper(), 980, 72)
-    hb = draw.textbbox((0, 0), hook.upper(), font=hook_f)
-    hx = (W - (hb[2] - hb[0])) // 2
-    fill = "#E10600" if '"' in hook or "\u201c" in hook else "white"
-    stroke_text(draw, (hx, 900), hook.upper(), hook_f, fill, "black", 3)
+    badge = "NEWS"
+    bf = font(28)
+    bb = draw.textbbox((0, 0), badge, font=bf)
+    nw, nh = bb[2] - bb[0] + 28, bb[3] - bb[1] + 16
+    nx = (W - nw) // 2
+    ny = PHOTO_Y + PHOTO_H - nh - 10
+    draw.rectangle((nx, ny, nx + nw, ny + nh), fill="black", outline="white", width=3)
+    draw.text((nx + 14, ny + 4), badge, font=bf, fill="white")
+    draw.rectangle((0, TEXT_TOP, W, FOOTER_TOP), fill="black")
+    name = artist.upper()
+    hook_u = hook.upper()
+    fa = fill_width(draw, name, 1044, 80, 180)
+    ba = draw.textbbox((0, 0), name, font=fa)
+    fh = fill_width(draw, hook_u, 1032, 70, 140)
+    bh = draw.textbbox((0, 0), hook_u, font=fh)
+    ah, hh, gap = ba[3] - ba[1], bh[3] - bh[1], 10
+    ty = TEXT_TOP + (FOOTER_TOP - TEXT_TOP - (ah + gap + hh)) // 2 - 8
+    draw.text(((W - (ba[2] - ba[0])) // 2, ty), name, font=fa, fill="white")
+    draw.text(((W - (bh[2] - bh[0])) // 2, ty + ah + gap), hook_u, font=fh, fill=RED)
     out = WORKDIR / "slide1.jpg"
-    base.save(out, quality=92)
+    base.save(out, quality=93)
     return out
 
 
-def render_slide2(title, tracks, photo: Image.Image):
-    img = Image.new("RGB", (W, H), "black")
-    draw = ImageDraw.Draw(img)
-    title_f = fit_text(draw, title.upper(), 700, 70)
-    stroke_text(draw, (40, 36), title.upper(), title_f)
-    meta_f = font(28)
-    draw.text((40, 120), f"TRACKLIST  •  {len(tracks)} TRACKS", font=meta_f, fill="white")
-    draw.rectangle((40, 158, 280, 162), fill="#E10600")
-    y = 190
-    body = font(28)
-    for i, track in enumerate(tracks[:16], 1):
-        draw.text((40, y), f"{i:02d}", font=body, fill="#E10600")
-        draw.text((110, y), track.upper()[:28], font=body, fill="white")
-        y += 42
-    thumb = cover_box(photo, (0, 0, 360, 360))
-    img.paste(thumb, (680, 40))
-    draw.text((40, 1260), "SWIPE", font=font(22), fill="white")
+def render_slide2(title, tracks, photo: Image.Image, source=""):
+    base = template()
+    draw = ImageDraw.Draw(base)
+    draw.rectangle((0, 0, W, FOOTER_TOP), fill="black")
+    ttl = title.upper()
+    ft = fill_width(draw, ttl, 680, 50, 120)
+    draw.text((36, 20), ttl, font=ft, fill="white")
+    tb = draw.textbbox((0, 0), ttl, font=ft)
+    draw.text((36, tb[3] + 28), f"TRACKLIST  -  {len(tracks)} TRACKS", font=font(30), fill="white")
+    draw.rectangle((36, tb[3] + 66, 380, tb[3] + 72), fill=RED)
+    body, featf = font(24), font(16)
+    start_y = tb[3] + 90
+    split = 9 if len(tracks) > 11 else len(tracks)
+    for i, track in enumerate(tracks[:18], 1):
+        if isinstance(track, str):
+            name, feat = track, ""
+        else:
+            name, feat = track.get("name") or "", track.get("feat") or ""
+        col = 0 if i <= split else 1
+        x = 36 if col == 0 else 430
+        y = start_y + ((i - 1) % split) * 44
+        draw.text((x, y), f"{i:02d}", font=body, fill=RED)
+        draw.text((x + 50, y), name.upper()[:22], font=body, fill="white")
+        if feat:
+            nb = draw.textbbox((0, 0), name.upper()[:22], font=body)
+            draw.text((x + 50 + nb[2] - nb[0] + 6, y + 3), f"FEAT. {feat.upper()[:16]}", font=featf, fill=RED)
+    thumb = cover_fill(photo, 280, 280)
+    base.paste(thumb, (760, 24))
+    draw.text((760, 310), "COVER ART", font=font(16), fill="#888888")
+    if source:
+        draw.text((36, 1148), source.upper()[:48], font=font(18), fill="#888888")
     out = WORKDIR / "slide2.jpg"
-    img.save(out, quality=92)
+    base.save(out, quality=93)
     return out
+
+
+def fetch_tracks(artist, title):
+    llm = get_llm_client()
+    if not llm:
+        return [{"name": title, "feat": ""}]
+    try:
+        resp = llm.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Return ONLY JSON list of real tracks: [{\"name\":\"\",\"feat\":\"\"}]. feat empty if none. No invented songs.",
+                },
+                {"role": "user", "content": f"Official tracklist for {artist} - {title}"},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        data = json.loads(raw)
+        out = []
+        for row in data:
+            if isinstance(row, str):
+                out.append({"name": row, "feat": ""})
+            elif isinstance(row, dict) and row.get("name"):
+                out.append({"name": str(row["name"])[:40], "feat": str(row.get("feat") or "")[:24]})
+        return out[:18] or [{"name": title, "feat": ""}]
+    except Exception as e:
+        print(f"tracks: {e}", flush=True)
+        return [{"name": title, "feat": ""}]
 
 
 def host_image(path: Path):
@@ -194,7 +242,7 @@ def heat_text():
         if not isinstance(m, dict):
             continue
         for e in m.get("embeds") or []:
-            if (e.get("title") or "").lower().find("heat") >= 0 or e.get("description"):
+            if e.get("description"):
                 blobs.append(e.get("description") or "")
     return "\n".join(blobs)
 
@@ -208,7 +256,11 @@ def parse_items(blob):
         low = line.lower()
         if any(s in low for s in ("history note", "emerging", "keep eyes")):
             continue
-        m = re.search(r"([A-Za-z0-9$][A-Za-z0-9$ .'xX]{1,40})\s+(?:dropped|dumped|out with|surprise-dropped)\s+\*?([^*\u2014\-]+)", line, re.I)
+        m = re.search(
+            r"([A-Za-z0-9$][A-Za-z0-9$ .'xX]{1,40})\s+(?:dropped|dumped|out with|surprise-dropped)\s+\*?([^*\u2014\-]+)",
+            line,
+            re.I,
+        )
         if not m:
             m = re.search(r"([A-Za-z0-9$][A-Za-z0-9$ .'xX]{1,40})\s+\*([^*]+)\*", line)
         if not m:
@@ -223,8 +275,7 @@ def parse_items(blob):
 
 def pick_article():
     used = load_used()
-    items = parse_items(heat_text())
-    for it in items:
+    for it in parse_items(heat_text()):
         key = slugify(it["artist"] + it["title"])
         if any(s in key or s in slugify(it["line"]) for s in used):
             continue
@@ -243,8 +294,7 @@ def publish_carousel(urls, text):
             "INSTAGRAM_POST_IG_USER_MEDIA",
             {"ig_user_id": IG_USER_ID, "image_url": url, "is_carousel_item": True},
         )
-        data = created.get("data") if isinstance(created, dict) else {}
-        cid = data.get("id")
+        cid = (created.get("data") or {}).get("id")
         if not cid:
             raise RuntimeError(f"no child id {created}")
         children.append(cid)
@@ -280,9 +330,10 @@ def run_carousel_job():
         announce_discord(f"808 carousel skip {item['artist']} — no real photo.")
         return None
     photo = fetch_photo(cover["url"])
+    tracks = fetch_tracks(item["artist"], item["title"])
     hook = f'DROPS "{item["title"]}"'
     s1 = render_slide1(item["artist"], hook, photo)
-    s2 = render_slide2(item["title"], [item["title"], "MORE INFO ON SLIDE 1"], photo)
+    s2 = render_slide2(item["title"], tracks, photo, source="SOURCE: HEAT")
     u1, u2 = host_image(s1), host_image(s2)
     cap = caption(item)
     announce_discord(
