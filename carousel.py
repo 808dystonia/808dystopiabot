@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import uuid
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -14,11 +15,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 from pinterest_bot import execute_composio_tool, get_llm_client, lookup_artist_image
 from reel_publish import announce_discord
+from genius_pull import genius_tracklist
 
 HEAT_CHANNEL = os.getenv("DISCORD_HEAT_CHANNEL_ID", "1545437232142360599")
 IG_USER_ID = os.getenv("IG_USER_ID", "28902406756011804")
-PUBLISH = os.getenv("CAROUSEL_PUBLISH", "0") == "1"
+PUBLISH = os.getenv("CAROUSEL_PUBLISH", "0") == "1" or os.getenv("AUTO_PUBLISH", "0") == "1"
 USED_FILE = Path(os.getenv("CAROUSEL_USED_FILE", "/tmp/808_carousel_used.json"))
+USED_DRIVE_ID = os.getenv("CAROUSEL_USED_DRIVE_ID", "10fRHhw-MNlWcNKDWhyOIn0ZowmyBtRbk")
 WORKDIR = Path("/tmp/808carousel")
 CT = ZoneInfo("America/Chicago")
 W, H = 1080, 1350
@@ -37,19 +40,62 @@ HASHTAGS = [
 ]
 
 
+def slugify(text):
+    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+
+
+def _parse_used(raw):
+    data = json.loads(raw) if isinstance(raw, str) else raw
+    if isinstance(data, list):
+        return {slugify(x) for x in data if x}
+    if isinstance(data, dict):
+        rows = data.get("slugs") or data.get("used") or data.get("ids") or []
+        return {slugify(x) for x in rows if x}
+    return set()
+
+
 def load_used():
+    """Union Drive + local. Never wipe memory just because one store is down."""
+    local = None
+    drive = None
     try:
-        return set(json.loads(USED_FILE.read_text()))
+        local = _parse_used(USED_FILE.read_text())
     except Exception:
-        return set(USED_SEED)
+        local = None
+    if USED_DRIVE_ID:
+        try:
+            dest = WORKDIR / "_used_drive.json"
+            download_drive(USED_DRIVE_ID, dest)
+            drive = _parse_used(dest.read_text())
+        except Exception as e:
+            print(f"used drive load: {e}", flush=True)
+            drive = None
+    used = set()
+    if local:
+        used |= local
+    if drive:
+        used |= drive
+    if not used:
+        used = {slugify(s) for s in USED_SEED}
+    return used
 
 
 def save_used(used):
-    USED_FILE.write_text(json.dumps(sorted(used)))
-
-
-def slugify(text):
-    return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
+    payload = json.dumps(sorted(used))
+    try:
+        USED_FILE.parent.mkdir(parents=True, exist_ok=True)
+        USED_FILE.write_text(payload)
+    except Exception as e:
+        print(f"used local save: {e}", flush=True)
+    if not USED_DRIVE_ID:
+        return
+    try:
+        execute_composio_tool(
+            "GOOGLEDRIVE_EDIT_FILE",
+            {"file_id": USED_DRIVE_ID, "content": payload, "mime_type": "application/json"},
+        )
+    except Exception as e:
+        print(f"used drive save: {e}", flush=True)
 
 
 def download_drive(file_id, dest: Path):
@@ -176,7 +222,7 @@ def render_slide2_tracks(title, tracks, photo: Image.Image, source=""):
     draw = ImageDraw.Draw(base)
     draw.rectangle((0, 0, W, FOOTER_TOP), fill="black")
     ttl = title.upper()
-    ft = fill_width(draw, ttl, 680, 50, 120)
+    ft = fill_width(draw, ttl, 1016, 50, 120)
     draw.text((36, 20), ttl, font=ft, fill="white")
     tb = draw.textbbox((0, 0), ttl, font=ft)
     draw.text((36, tb[3] + 28), f"TRACKLIST  -  {len(tracks)} TRACKS", font=font(30), fill="white")
@@ -190,15 +236,13 @@ def render_slide2_tracks(title, tracks, photo: Image.Image, source=""):
         else:
             name, feat = track.get("name") or "", track.get("feat") or ""
         col = 0 if i <= split else 1
-        x = 36 if col == 0 else 430
+        x = 36 if col == 0 else 556
         y = start_y + ((i - 1) % split) * 44
         draw.text((x, y), f"{i:02d}", font=body, fill=RED)
         draw.text((x + 50, y), name.upper()[:22], font=body, fill="white")
         if feat:
             nb = draw.textbbox((0, 0), name.upper()[:22], font=body)
             draw.text((x + 50 + nb[2] - nb[0] + 6, y + 3), f"FEAT. {feat.upper()[:16]}", font=featf, fill=RED)
-    base.paste(cover_fill(photo, 280, 280), (760, 24))
-    draw.text((760, 310), "COVER ART", font=font(16), fill="#888888")
     if source:
         draw.text((36, 1148), source.upper()[:48], font=font(18), fill="#888888")
     out = WORKDIR / "slide2.jpg"
@@ -211,7 +255,7 @@ def render_slide2_single(title, brief, photo: Image.Image, source=""):
     draw = ImageDraw.Draw(base)
     draw.rectangle((0, 0, W, FOOTER_TOP), fill="black")
     ttl = title.upper()
-    ft = fill_width(draw, ttl, 680, 50, 110)
+    ft = fill_width(draw, ttl, 1016, 50, 110)
     draw.text((36, 20), ttl, font=ft, fill="white")
     tb = draw.textbbox((0, 0), ttl, font=ft)
     draw.text((36, tb[3] + 24), "SINGLE", font=font(28), fill=RED)
@@ -222,18 +266,16 @@ def render_slide2_single(title, brief, photo: Image.Image, source=""):
         if not quote.startswith('"'):
             quote = f'"{quote.strip(chr(34))}"'
         qf = font(28)
-        for line in wrap_text(draw, quote.upper(), qf, 700):
+        for line in wrap_text(draw, quote.upper(), qf, 1000):
             draw.text((36, y), line, font=qf, fill="white")
             y += 40
         y += 12
     body = font(26)
     for para in brief.get("lines") or []:
-        for line in wrap_text(draw, str(para).upper(), body, 700):
+        for line in wrap_text(draw, str(para).upper(), body, 1000):
             draw.text((36, y), line, font=body, fill="#DDDDDD")
             y += 36
         y += 8
-    base.paste(cover_fill(photo, 280, 280), (760, 24))
-    draw.text((760, 310), "COVER ART", font=font(16), fill="#888888")
     if source:
         draw.text((36, 1148), source.upper()[:48], font=font(18), fill="#888888")
     out = WORKDIR / "slide2.jpg"
@@ -249,31 +291,11 @@ def looks_single(item, tracks):
 
 
 def fetch_tracks(artist, title):
-    llm = get_llm_client()
-    if not llm:
-        return [{"name": title, "feat": ""}]
-    try:
-        resp = llm.chat.completions.create(
-            model="deepseek-chat",
-            messages=[
-                {"role": "system", "content": 'Return ONLY JSON: [{"name":"","feat":""}]. No invented songs. If it is a single return one item.'},
-                {"role": "user", "content": f"Official tracklist for {artist} - {title}"},
-            ],
-        )
-        raw = (resp.choices[0].message.content or "").strip()
-        if raw.startswith("```"):
-            raw = raw.strip("`").lstrip("json").strip()
-        data = json.loads(raw)
-        out = []
-        for row in data:
-            if isinstance(row, str):
-                out.append({"name": row, "feat": ""})
-            elif isinstance(row, dict) and row.get("name"):
-                out.append({"name": str(row["name"])[:40], "feat": str(row.get("feat") or "")[:24]})
-        return out[:18] or [{"name": title, "feat": ""}]
-    except Exception as e:
-        print(f"tracks: {e}", flush=True)
-        return [{"name": title, "feat": ""}]
+    result = genius_tracklist(artist, title)
+    tracks = result.get("tracks") or []
+    if len(tracks) < 2:
+        return {"tracks": [], "source": "", "verified": False}
+    return result
 
 
 def fetch_brief(item):
@@ -343,7 +365,7 @@ def parse_items(blob):
         if any(s in low for s in ("history note", "emerging", "keep eyes")):
             continue
         m = re.search(
-            r"([A-Za-z0-9$][A-Za-z0-9$ .'xX]{1,40})\s+(?:dropped|dumped|out with|surprise-dropped)\s+\*?([^*\u2014\-]+)",
+            r"([A-Za-z0-9$][A-Za-z0-9$ .'xX]{1,40})\s+(?:dropped|dumped|out with|surprise-dropped)\s+\*?([^*—\-]+)",
             line,
             re.I,
         )
@@ -352,7 +374,7 @@ def parse_items(blob):
         if not m:
             continue
         artist = m.group(1).strip(" -")
-        title = re.split(r"\s+[\u2014\-(]", m.group(2).strip(" *"))[0].strip(" .")
+        title = re.split(r"\s+[—\-(]", m.group(2).strip(" *"))[0].strip(" .")
         if len(title) < 2 or len(artist) < 2:
             continue
         items.append({"artist": artist, "title": title, "line": line})
@@ -400,32 +422,42 @@ def publish_carousel(urls, text):
 
 
 def run_carousel_job():
+    job = uuid.uuid4().hex[:6]
     now = datetime.now(CT).strftime("%a %b %d %Y %I:%M %p CT")
     WORKDIR.mkdir(parents=True, exist_ok=True)
-    print(f"CAROUSEL {now}", flush=True)
+    print(f"CAROUSEL job={job} {now}", flush=True)
     item, key = pick_article()
     if not item:
-        announce_discord(f"808 carousel {now}\nNo unused Morning Heat album. Skip.")
+        announce_discord(f"808 carousel job={job} {now}\nNo unused Morning Heat album. Skip.")
         return None
     cover = lookup_artist_image(f"{item['artist']} {item['title']}", item["artist"], item["title"])
     if not cover.get("ok"):
-        announce_discord(f"808 carousel skip {item['artist']} — no real photo.")
+        announce_discord(f"808 carousel job={job} skip {item['artist']} — no real photo.")
         return None
     photo = fetch_photo(cover["url"])
-    tracks = fetch_tracks(item["artist"], item["title"])
+    tl = fetch_tracks(item["artist"], item["title"])
+    tracks = tl.get("tracks") or []
+    verified = bool(tl.get("verified"))
     hook = f'DROPS "{item["title"]}"'
     s1 = render_slide1(item["artist"], hook, photo)
-    if looks_single(item, tracks):
+    use_tracklist = verified and not looks_single(item, tracks)
+    if use_tracklist:
+        s2 = render_slide2_tracks(item["title"], tracks, photo, source=tl.get("source") or "SOURCE: GENIUS")
+        cap = f"{item['line']}\n\nCredit {item['artist']}\nFollow for more."
+    else:
+        if not looks_single(item, tracks):
+            announce_discord(
+                f"808 carousel job={job}\n{item['artist']} — {item['title']}\n"
+                "No verified Genius tracklist. Context slide, not a fake list."
+            )
         brief = fetch_brief(item)
         s2 = render_slide2_single(item["title"], brief, photo, source="SOURCE: HEAT")
         cap = brief.get("caption") or item["line"]
-    else:
-        s2 = render_slide2_tracks(item["title"], tracks, photo, source="SOURCE: HEAT")
-        cap = f"{item['line']}\n\nCredit {item['artist']}\nFollow for more."
     u1, u2 = host_image(s1), host_image(s2)
     announce_discord(
-        f"808 carousel staged {now}\n{item['artist']} — {item['title']}\n"
-        f"photo: {cover.get('source')}\n{u1}\n{u2}\n\n{cap}\n\npublish={'ON' if PUBLISH else 'OFF'}"
+        f"808 carousel staged job={job} {now}\n{item['artist']} — {item['title']}\n"
+        f"photo: {cover.get('source')} tracks={len(tracks)} verified={verified}\n"
+        f"{u1}\n{u2}\n\n{cap}\n\npublish={'ON' if PUBLISH else 'OFF'}"
     )
     used = load_used()
     used.add(key)
@@ -433,7 +465,7 @@ def run_carousel_job():
     save_used(used)
     if PUBLISH:
         mid = publish_carousel([u1, u2], cap[:900])
-        announce_discord(f"808 carousel live media_id={mid}")
+        announce_discord(f"808 carousel live job={job} media_id={mid}")
     return item
 
 
