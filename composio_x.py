@@ -1,4 +1,9 @@
-"""One Composio execute helper. Discord calls pin DT SERVER BOT."""
+"""One Composio execute helper.
+
+Do not hardcode a connected_account_id. Render and Grok are different
+Composio projects. Discord must be connected on the SAME project as
+COMPOSIO_API_KEY, then this auto-resolves.
+"""
 from __future__ import annotations
 
 import os
@@ -7,8 +12,8 @@ import requests
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
-COMPOSIO_DISCORD_ACCOUNT = os.getenv("COMPOSIO_DISCORD_ACCOUNT", "discordbot_qung-whiff")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
+COMPOSIO_DISCORD_ACCOUNT = (os.getenv("COMPOSIO_DISCORD_ACCOUNT") or "").strip()
 
 
 def execute_composio_tool(slug, arguments, user_id=None):
@@ -19,7 +24,7 @@ def execute_composio_tool(slug, arguments, user_id=None):
         "user_id": user_id or COMPOSIO_USER_ID,
         "version": "latest",
     }
-    if str(slug).upper().startswith("DISCORDBOT_"):
+    if COMPOSIO_DISCORD_ACCOUNT and str(slug).upper().startswith("DISCORDBOT_"):
         payload["connected_account_id"] = COMPOSIO_DISCORD_ACCOUNT
     url = f"{COMPOSIO_BASE}/tools/execute/{slug}"
     print(f"Composio execute {slug}", flush=True)
