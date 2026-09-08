@@ -1,11 +1,7 @@
 name: 808 kicks
-# UTC times = CDT (UTC-5). After CST starts Nov 1, shift +1 hour.
+# Schedule off — cron-job.org owns the clock.
+# Keep this for a manual test from Actions → Run workflow.
 on:
-  schedule:
-    - cron: "58 13 * * *"
-    - cron: "8 14 * * *"
-    - cron: "58 22 * * *"
-    - cron: "58 23 * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -19,18 +15,10 @@ jobs:
       - name: pick url
         id: pick
         env:
-          CRON: "${{ github.event.schedule }}"
           MANUAL: "${{ github.event.inputs.job }}"
         run: |
           BASE="https://eight08dystopiabot.onrender.com"
-          JOB="$MANUAL"
-          case "$CRON" in
-            "58 13 * * *") JOB=carousel ;;
-            "8 14 * * *") JOB=pin ;;
-            "58 22 * * *") JOB=brief ;;
-            "58 23 * * *") JOB=reel ;;
-          esac
-          JOB="${JOB:-wake}"
+          JOB="${MANUAL:-wake}"
           case "$JOB" in
             carousel) URL="$BASE/run/carousel" ;;
             pin) URL="$BASE/run/pin" ;;
