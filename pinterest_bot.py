@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 import time
 import random
@@ -61,16 +62,54 @@ def start_health_server():
     server.serve_forever()
 
 
-def search_youtube_for_rap():
+def generate_album_concept():
+    """DeepSeek invents a fresh underground rap album concept."""
     try:
-        print("Searching YouTube for underground rap...")
-        search_queries = [
-            "underground rap album cover 2024",
-            "independent hip hop album 2024",
-            "best underground rap albums 2024",
-            "new underground hip hop album",
-        ]
-        query = random.choice(search_queries)
+        print("DeepSeek generating album concept...")
+        prompt = """Invent one brand-new, fictional underground rap album that does NOT exist in real life.
+Return ONLY valid JSON, no markdown fences, no commentary, with these exact keys:
+- artist: a made-up artist name (string)
+- album: a made-up album title (string)
+- year: a plausible release year as a string, e.g. "2025"
+- genre: a short genre tag, e.g. "Abstract Hip-Hop"
+- vibe: one short sentence describing the sound/mood
+- cover_prompt: a short text prompt describing an album cover image suitable for an AI image generator
+
+Make it sound like real underground hip-hop: gritty, specific, interesting. Vary the style each time."""
+        response = client.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are a creative director for an underground rap brand. You output only valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=1.0,
+        )
+        raw = (response.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        concept = json.loads(raw)
+        concept["artist"] = str(concept.get("artist", "Unknown"))[:50]
+        concept["album"] = str(concept.get("album", "Untitled"))[:50]
+        concept["year"] = str(concept.get("year", "2025"))[:4]
+        concept["genre"] = str(concept.get("genre", "Underground Rap"))[:40]
+        concept["vibe"] = str(concept.get("vibe", ""))[:120]
+        concept["cover_prompt"] = str(concept.get("cover_prompt", ""))[:200]
+        print(f"Concept: {concept['artist']} - {concept['album']}")
+        return concept
+    except Exception as e:
+        print(f"DeepSeek concept generation failed: {e}")
+        print("Falling back to backup album...")
+        return random.choice(BACKUP_ALBUMS)
+
+
+def find_cover_image(concept):
+    """Search YouTube for a cover-like image matching the concept's vibe."""
+    try:
+        print("Searching YouTube for a matching cover image...")
+        query = f"{concept.get('genre', 'underground rap')} album cover art {concept.get('vibe', '')[:40]}"
         response = composio_toolset.execute_tool_calls(
             tool_calls=[{
                 "function": {
@@ -97,44 +136,31 @@ def search_youtube_for_rap():
                         break
 
         for item in items:
-            snippet = item.get("snippet", {})
-            title = snippet.get("title", "")
-            if " - " not in title:
-                continue
-            artist, album = [part.strip() for part in title.split(" - ", 1)]
-            for word in ["(Official)", "(Audio)", "(Lyric Video)", "FULL ALBUM"]:
-                album = album.replace(word, "").strip()
-            thumbnails = snippet.get("thumbnails", {})
+            thumbnails = (item.get("snippet") or {}).get("thumbnails", {})
             cover_url = (
                 thumbnails.get("high", {}).get("url")
                 or thumbnails.get("medium", {}).get("url")
                 or thumbnails.get("default", {}).get("url")
             )
             if cover_url:
-                return {
-                    "artist": artist[:50],
-                    "album": album[:50],
-                    "cover_url": cover_url,
-                    "year": "2024",
-                    "video_id": (item.get("id") or {}).get("videoId", ""),
-                }
+                return cover_url
 
-        print("YouTube search returned nothing, using backup list...")
-        return random.choice(BACKUP_ALBUMS)
+        print("YouTube returned no usable cover, using backup...")
+        return None
     except Exception as e:
-        print(f"YouTube error: {e}")
-        print("Using backup album...")
-        return random.choice(BACKUP_ALBUMS)
+        print(f"YouTube cover search error: {e}")
+        return None
 
 
-def create_description(album):
+def create_description(concept):
     try:
         print("Writing description...")
         prompt = f"""Write a short, hype Pinterest description for this underground rap album:
-Artist: {album['artist']}
-Album: {album['album']}
-Year: {album.get('year', '2024')}
-Genre: {album.get('genre', 'Underground Rap')}
+Artist: {concept['artist']}
+Album: {concept['album']}
+Year: {concept.get('year', '2025')}
+Genre: {concept.get('genre', 'Underground Rap')}
+Vibe: {concept.get('vibe', '')}
 
 Requirements:
 - Mention the artist and album
@@ -153,20 +179,19 @@ Requirements:
             ],
         )
         description = response.choices[0].message.content or ""
-        if album["artist"] not in description:
-            description = f"{album['artist']} - {album['album']} • {description}"
+        if concept["artist"] not in description:
+            description = f"{concept['artist']} - {concept['album']} • {description}"
         return description[:200]
     except Exception as e:
         print(f"AI description failed: {e}")
-        return f"{album['artist']} - {album['album']} • Underground heat. #808dystopia #undergroundrap"
+        return f"{concept['artist']} - {concept['album']} • Underground heat. #808dystopia #undergroundrap"
 
 
-def post_to_pinterest(album, description):
+def post_to_pinterest(concept, description, cover_url):
     try:
         print("Posting to Pinterest...")
-        image_url = album.get("cover_url")
-        if not image_url:
-            print("No cover URL on this album. Skipping pin instead of posting a placeholder.")
+        if not cover_url:
+            print("No cover URL. Skipping pin instead of posting a placeholder.")
             return None
 
         response = composio_toolset.execute_tool_calls(
@@ -175,18 +200,18 @@ def post_to_pinterest(album, description):
                     "name": "PINTEREST_CREATE_PIN",
                     "arguments": {
                         "board_id": BOARD_ID,
-                        "title": f"{album['artist']} - {album['album']}",
+                        "title": f"{concept['artist']} - {concept['album']}",
                         "description": description,
                         "link": SITE_URL,
                         "media_source": {
                             "source_type": "image_url",
-                            "url": image_url,
+                            "url": cover_url,
                         },
                     },
                 }
             }]
         )
-        print(f"POSTED: {album['artist']} - {album['album']}")
+        print(f"POSTED: {concept['artist']} - {concept['album']}")
         return response
     except Exception as e:
         print(f"Pinterest error: {e}")
@@ -197,11 +222,12 @@ def daily_post():
     print("=" * 50)
     print(f"808DYSTOPIA BOT ACTIVATED - {datetime.now()}")
     print("=" * 50)
-    album = search_youtube_for_rap()
-    print(f"Found: {album['artist']} - {album['album']}")
-    description = create_description(album)
+    concept = generate_album_concept()
+    print(f"Concept: {concept['artist']} - {concept['album']} ({concept.get('genre', '')})")
+    cover_url = find_cover_image(concept)
+    description = create_description(concept)
     print(f"Description: {description[:100]}...")
-    result = post_to_pinterest(album, description)
+    result = post_to_pinterest(concept, description, cover_url)
     if result:
         print("SUCCESS")
     else:
