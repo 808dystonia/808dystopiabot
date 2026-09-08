@@ -10,35 +10,16 @@ from pathlib import Path
 
 import requests
 
+from composio_x import execute_composio_tool
 from reel_media import crop_to_916, host_mp4
 from reel_publish import publish_reel
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
-COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
-COMPOSIO_DISCORD_ACCOUNT = os.getenv("COMPOSIO_DISCORD_ACCOUNT", "discordbot_qung-whiff")
-COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 ADMIN_CHANNEL_ID = os.getenv("DISCORD_ADMIN_CHANNEL_ID", "1542355862079807509")
 SEEN_FILE = Path(os.getenv("DISCORD_INGEST_SEEN", "/tmp/808_discord_ingest_seen.json"))
 WORKDIR = Path("/tmp/808reels/discord")
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
 VIDEO_MIMES = {"video/mp4", "video/quicktime", "video/webm"}
-
-
-def execute(slug, arguments):
-    resp = requests.post(
-        f"{COMPOSIO_BASE}/tools/execute/{slug}",
-        headers={"x-api-key": COMPOSIO_API_KEY, "Content-Type": "application/json"},
-        json={
-            "arguments": arguments or {},
-            "user_id": COMPOSIO_USER_ID,
-            "connected_account_id": COMPOSIO_DISCORD_ACCOUNT,
-            "version": "latest",
-        },
-        timeout=60,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(f"{slug} HTTP {resp.status_code}: {resp.text[:240]}")
-    return resp.json()
 
 
 def load_seen():
@@ -58,7 +39,7 @@ def ingest_admin_videos():
         return []
     try:
         seen = load_seen()
-        raw = execute("DISCORDBOT_LIST_MESSAGES", {"channel_id": ADMIN_CHANNEL_ID, "limit": 25})
+        raw = execute_composio_tool("DISCORDBOT_LIST_MESSAGES", {"channel_id": ADMIN_CHANNEL_ID, "limit": 25})
     except Exception as e:
         print(f"ingest skip: {e}", flush=True)
         return []
