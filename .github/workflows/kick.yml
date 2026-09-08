@@ -1,0 +1,55 @@
+name: 808 kicks
+# GitHub cron is UTC. These are CDT (UTC-5), Sep–early Nov.
+# After CST starts, they fire one hour later until we shift them.
+on:
+  schedule:
+    - cron: "58 13 * * *"   # 8:58 AM CT CDT — carousel
+    - cron: "8 14 * * *"    # 9:08 AM CT CDT — pin
+    - cron: "58 22 * * *"   # 5:58 PM CT CDT — brief
+    - cron: "58 23 * * *"   # 6:58 PM CT CDT — reel
+    - cron: "*/10 * * * *"  # keep Render awake
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "carousel | pin | brief | reel | wake"
+        default: "wake"
+        required: true
+jobs:
+  kick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pick url
+        id: pick
+        run: |
+          BASE="https://eight08dystopiabot.onrender.com"
+          JOB="${{ github.event.inputs.job }}"
+          if [ -z "$JOB" ]; then
+            MINUTE=$(date -u +%M)
+            HOUR=$(date -u +%H)
+            if [ "$HOUR" = "13" ] && [ "$MINUTE" = "58" ]; then JOB=carousel
+            elif [ "$HOUR" = "14" ] && [ "$MINUTE" = "08" ]; then JOB=pin
+            elif [ "$HOUR" = "22" ] && [ "$MINUTE" = "58" ]; then JOB=brief
+            elif [ "$HOUR" = "23" ] && [ "$MINUTE" = "58" ]; then JOB=reel
+            else JOB=wake
+            fi
+          fi
+          case "$JOB" in
+            carousel) URL="$BASE/run/carousel" ;;
+            pin) URL="$BASE/run/pin" ;;
+            brief) URL="$BASE/run/brief" ;;
+            reel) URL="$BASE/run/reel" ;;
+            *) URL="$BASE/wake" ;;
+          esac
+          echo "job=$JOB" >> "$GITHUB_OUTPUT"
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "Kicking $JOB $URL"
+      - name: ping
+        run: |
+          curl -sS -m 25 -o /tmp/kick.json -w "%{http_code}" "${{ steps.pick.outputs.url }}" | tee /tmp/code.txt
+          echo
+          cat /tmp/kick.json || true
+          CODE=$(cat /tmp/code.txt)
+          if [ "$CODE" != "200" ] && [ "$CODE" != "202" ]; then
+            echo "unexpected status $CODE"
+            exit 1
+          fi
