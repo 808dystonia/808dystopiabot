@@ -60,15 +60,27 @@ def keepalive():
         print(f"keepalive: {e}", flush=True)
 
 
+def _safe(name, fn):
+    def run():
+        try:
+            return fn()
+        except Exception as e:
+            print(f"{name} crash: {e}", flush=True)
+            return None
+
+    run.__name__ = name
+    return run
+
+
 if __name__ == "__main__":
     threading.Thread(target=start_health_server, daemon=True).start()
     time.sleep(0.3)
-    schedule.every().day.at("09:00").do(run_carousel_job)
-    schedule.every().day.at("09:10").do(daily_post)
-    schedule.every().day.at("18:00").do(send_brief)
-    schedule.every().day.at("19:00").do(run_reel_job)
-    schedule.every(10).minutes.do(ingest_admin_videos)
-    schedule.every(10).minutes.do(process_drive_reels)
+    schedule.every().day.at("09:00").do(_safe("carousel", run_carousel_job))
+    schedule.every().day.at("09:10").do(_safe("pin", daily_post))
+    schedule.every().day.at("18:00").do(_safe("brief", send_brief))
+    schedule.every().day.at("19:00").do(_safe("reel", run_reel_job))
+    schedule.every(10).minutes.do(_safe("ingest", ingest_admin_videos))
+    schedule.every(10).minutes.do(_safe("drive_reels", process_drive_reels))
     schedule.every(5).minutes.do(keepalive)
     print("808 bot up — /run/carousel /run/pin /run/brief /run/reel", flush=True)
     keepalive()
