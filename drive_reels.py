@@ -14,6 +14,7 @@ from openai import OpenAI
 
 from reel_media import crop_to_916, host_mp4, probe
 from reel_publish import announce_discord, publish_reel
+from carousel_tag import apply_credits
 
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
@@ -190,7 +191,8 @@ def watermark(src: Path, dest: Path):
 
 def caption_for(name):
     artist = name.split("_")[0].split("-")[0].rsplit(".", 1)[0]
-    fallback = f"{artist}\nSource: 808 archive\nFollow for more."
+    producer = ""
+    fallback = apply_credits(f"{artist}\nSource: 808 archive", artist=artist, producer=producer)
     if not OPENAI_API_KEY:
         return fallback, artist
     try:
@@ -198,13 +200,25 @@ def caption_for(name):
         resp = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
-                {"role": "system", "content": "808 Dystopia Reel caption. Short. Credit artist from filename. No fake facts. End Follow for more. No hashtag dump."},
+                {
+                    "role": "system",
+                    "content": (
+                        "808 Dystopia Reel caption. Return ONLY JSON "
+                        '{"caption":"","artist":"","producer":""}. '
+                        "Artist from the filename. Producer only if the name/context names one. "
+                        "No fake facts. No @ handles — code adds those. No hashtag dump."
+                    ),
+                },
                 {"role": "user", "content": name},
             ],
         )
-        text = (resp.choices[0].message.content or "").strip()
-        if "follow for more" not in text.lower():
-            text += "\nFollow for more."
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        data = json.loads(raw) if raw.startswith("{") else {"caption": raw}
+        artist = str(data.get("artist") or artist)
+        producer = str(data.get("producer") or "")
+        text = apply_credits(str(data.get("caption") or fallback), artist=artist, producer=producer)
         return text[:900], artist
     except Exception as e:
         print(f"caption: {e}", flush=True)
