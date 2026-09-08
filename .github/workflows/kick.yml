@@ -1,13 +1,11 @@
 name: 808 kicks
-# GitHub cron is UTC. These are CDT (UTC-5), Sep–early Nov.
-# After CST starts, they fire one hour later until we shift them.
+# UTC times = CDT (UTC-5). After CST starts Nov 1, shift +1 hour.
 on:
   schedule:
-    - cron: "58 13 * * *"   # 8:58 AM CT CDT — carousel
-    - cron: "8 14 * * *"    # 9:08 AM CT CDT — pin
-    - cron: "58 22 * * *"   # 5:58 PM CT CDT — brief
-    - cron: "58 23 * * *"   # 6:58 PM CT CDT — reel
-    - cron: "*/10 * * * *"  # keep Render awake
+    - cron: "58 13 * * *"
+    - cron: "8 14 * * *"
+    - cron: "58 22 * * *"
+    - cron: "58 23 * * *"
   workflow_dispatch:
     inputs:
       job:
@@ -20,19 +18,19 @@ jobs:
     steps:
       - name: pick url
         id: pick
+        env:
+          CRON: "${{ github.event.schedule }}"
+          MANUAL: "${{ github.event.inputs.job }}"
         run: |
           BASE="https://eight08dystopiabot.onrender.com"
-          JOB="${{ github.event.inputs.job }}"
-          if [ -z "$JOB" ]; then
-            MINUTE=$(date -u +%M)
-            HOUR=$(date -u +%H)
-            if [ "$HOUR" = "13" ] && [ "$MINUTE" = "58" ]; then JOB=carousel
-            elif [ "$HOUR" = "14" ] && [ "$MINUTE" = "08" ]; then JOB=pin
-            elif [ "$HOUR" = "22" ] && [ "$MINUTE" = "58" ]; then JOB=brief
-            elif [ "$HOUR" = "23" ] && [ "$MINUTE" = "58" ]; then JOB=reel
-            else JOB=wake
-            fi
-          fi
+          JOB="$MANUAL"
+          case "$CRON" in
+            "58 13 * * *") JOB=carousel ;;
+            "8 14 * * *") JOB=pin ;;
+            "58 22 * * *") JOB=brief ;;
+            "58 23 * * *") JOB=reel ;;
+          esac
+          JOB="${JOB:-wake}"
           case "$JOB" in
             carousel) URL="$BASE/run/carousel" ;;
             pin) URL="$BASE/run/pin" ;;
@@ -45,11 +43,10 @@ jobs:
           echo "Kicking $JOB $URL"
       - name: ping
         run: |
-          curl -sS -m 25 -o /tmp/kick.json -w "%{http_code}" "${{ steps.pick.outputs.url }}" | tee /tmp/code.txt
-          echo
+          CODE=$(curl -sS -m 25 -o /tmp/kick.json -w "%{http_code}" "${{ steps.pick.outputs.url }}")
+          echo "status $CODE"
           cat /tmp/kick.json || true
-          CODE=$(cat /tmp/code.txt)
+          echo
           if [ "$CODE" != "200" ] && [ "$CODE" != "202" ]; then
-            echo "unexpected status $CODE"
             exit 1
           fi
