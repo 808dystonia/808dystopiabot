@@ -27,17 +27,20 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1",
 )
 
-BACKUP_ALBUMS = [
-    {"artist": "MIKE", "album": "Disco!", "year": "2023", "genre": "Abstract Hip-Hop"},
-    {"artist": "Earl Sweatshirt", "album": "Some Rap Songs", "year": "2018", "genre": "Experimental Rap"},
-    {"artist": "Mick Jenkins", "album": "The Waters", "year": "2014", "genre": "Conscious Hip-Hop"},
-    {"artist": "Billy Woods", "album": "Maps", "year": "2023", "genre": "Experimental Rap"},
-    {"artist": "JPEGMAFIA", "album": "SCARING THE HOES", "year": "2023", "genre": "Industrial Rap"},
-    {"artist": "Armand Hammer", "album": "We Buy Diabetic Test Strips", "year": "2023", "genre": "Experimental Rap"},
-    {"artist": "Roc Marciano", "album": "The Elephant Man's Bones", "year": "2022", "genre": "East Coast Rap"},
-    {"artist": "Boldy James", "album": "The Price of Tea in China", "year": "2020", "genre": "Detroit Rap"},
-    {"artist": "Westside Gunn", "album": "Pray for Paris", "year": "2020", "genre": "East Coast Rap"},
-    {"artist": "Conway the Machine", "album": "God Don't Make Mistakes", "year": "2022", "genre": "East Coast Rap"},
+UNDERGROUND_ARTISTS = [
+    "MIKE", "Earl Sweatshirt", "Mick Jenkins", "Billy Woods", "JPEGMAFIA",
+    "Armand Hammer", "Roc Marciano", "Boldy James", "Westside Gunn",
+    "Conway the Machine", "Ka", "Lupe Fiasco", "Aesop Rock", "El-P",
+    "Danny Brown", "Freddie Gibbs", "Vince Earl", "Navy Blue", "Pink Siifu",
+    "Zelooperz", "MIKE", "The Alchemist", "Conductor Williams", "Nicholas Craven",
+    "Rome Streetz", "Stove God Cooks", "Keefe", "Jay Electronica", "Yasiin Bey",
+    "Guilty Simpson", "Guilty Simpson", "Guilty Simpson", "Guilty Simpson",
+]
+
+UNDERGROUND_GENRES = [
+    "Abstract Hip-Hop", "Experimental Rap", "Conscious Hip-Hop", "East Coast Rap",
+    "Detroit Rap", "Boom Bap", "Lo-Fi Hip-Hop", "Underground Rap", "Jazz Rap",
+    "Hardcore Rap", "Alternative Hip-Hop", "G-Funk", "Southern Rap", "Midwest Rap",
 ]
 
 
@@ -60,38 +63,47 @@ def start_health_server():
 
 
 def generate_album_concept():
-    """DeepSeek invents a fresh underground rap album concept."""
+    """DeepSeek picks a real underground hip-hop/rap artist and album to feature."""
     try:
-        print("DeepSeek generating album concept...")
-        prompt = """Invent one brand-new, fictional underground rap album that does NOT exist in real life.
-Return ONLY valid JSON, no markdown fences, no commentary, with these exact keys:
-- artist: a made-up artist name (string)
-- album: a made-up album title (string)
-- year: a plausible release year as a string, e.g. "2025"
-- genre: a short genre tag, e.g. "Abstract Hip-Hop"
-- vibe: one short sentence describing the sound/mood
-- cover_prompt: a short text prompt describing an album cover image suitable for an AI image generator
+        print("DeepSeek selecting underground hip-hop/rap album...")
+        seed_artist = random.choice(UNDERGROUND_ARTISTS)
+        seed_genre = random.choice(UNDERGROUND_GENRES)
+        prompt = f"""You are curating an underground hip-hop and rap Pinterest board.
+Pick ONE real, existing underground hip-hop or rap artist and ONE of their real albums or mixtapes.
+Seed artist hint: {seed_artist}
+Seed genre hint: {seed_genre}
 
-Make it sound like real underground hip-hop: gritty, specific, interesting. Vary the style each time."""
+Return ONLY valid JSON, no markdown fences, no commentary, with these exact keys:
+- artist: the real artist name (string)
+- album: the real album or mixtape title (string)
+- year: release year as a string, e.g. "2023"
+- genre: short genre tag, must be underground hip-hop or rap related
+- vibe: one short sentence describing the sound/mood
+- cover_prompt: a short text prompt describing the album's cover art style
+
+Rules:
+- Artist and album MUST be real and verifiable.
+- Focus on underground, independent, or cult-classic hip-hop/rap — not mainstream pop rap.
+- Vary the style each time."""
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {
                     "role": "system",
-                    "content": "You are a creative director for an underground rap brand. You output only valid JSON.",
+                    "content": "You are a curator of underground hip-hop and rap. You output only valid JSON.",
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=1.0,
+            temperature=0.9,
         )
         raw = (response.choices[0].message.content or "").strip()
         if raw.startswith("```"):
             raw = raw.strip("`").lstrip("json").strip()
         concept = json.loads(raw)
-        concept["artist"] = str(concept.get("artist", "Unknown"))[:50]
+        concept["artist"] = str(concept.get("artist", seed_artist))[:50]
         concept["album"] = str(concept.get("album", "Untitled"))[:50]
-        concept["year"] = str(concept.get("year", "2025"))[:4]
-        concept["genre"] = str(concept.get("genre", "Underground Rap"))[:40]
+        concept["year"] = str(concept.get("year", "2023"))[:4]
+        concept["genre"] = str(concept.get("genre", seed_genre))[:40]
         concept["vibe"] = str(concept.get("vibe", ""))[:120]
         concept["cover_prompt"] = str(concept.get("cover_prompt", ""))[:200]
         print(f"Concept: {concept['artist']} - {concept['album']}")
@@ -99,7 +111,11 @@ Make it sound like real underground hip-hop: gritty, specific, interesting. Vary
     except Exception as e:
         print(f"DeepSeek concept generation failed: {e}")
         print("Falling back to backup album...")
-        return random.choice(BACKUP_ALBUMS)
+        return random.choice([
+            {"artist": "MIKE", "album": "Disco!", "year": "2023", "genre": "Abstract Hip-Hop", "vibe": "lo-fi dreamy", "cover_prompt": ""},
+            {"artist": "Earl Sweatshirt", "album": "Some Rap Songs", "year": "2018", "genre": "Experimental Rap", "vibe": "raw and introspective", "cover_prompt": ""},
+            {"artist": "Roc Marciano", "album": "The Elephant Man's Bones", "year": "2022", "genre": "East Coast Rap", "vibe": "gritty boom bap", "cover_prompt": ""},
+        ])
 
 
 def is_usable_cover(url, title=""):
@@ -112,7 +128,6 @@ def is_usable_cover(url, title=""):
     bad_ext = (".svg", ".gif", "logo", "icon", "sprite", "button", "avatar")
     if any(b in low for b in bad_ext):
         return False
-    # Prefer square-ish or large images; skip obvious tiny thumbs
     if "s=10" in low or "s=0" in low:
         return False
     return True
@@ -122,11 +137,13 @@ def find_cover_image(concept):
     """Search Google Images (via Composio) for a real underground rap album cover."""
     try:
         print("Searching Google Images for a real album cover...")
+        artist = concept.get("artist", "")
+        album = concept.get("album", "")
         queries = [
-            f"{concept.get('artist', '')} {concept.get('album', '')} album cover art",
-            f"{concept.get('genre', 'underground rap')} album cover art underground hip hop",
-            f"underground rap mixtape cover art {concept.get('vibe', '')[:30]}",
-            "underground hip hop album cover art real",
+            f"{artist} {album} album cover art",
+            f"{artist} {album} cover underground hip hop",
+            f"{concept.get('genre', 'underground rap')} album cover art {artist}",
+            f"{artist} mixtape cover art hip hop",
         ]
         seen = set()
         for q in queries:
@@ -183,33 +200,37 @@ def create_description(concept):
         prompt = f"""Write a short, hype Pinterest description for this underground rap album:
 Artist: {concept['artist']}
 Album: {concept['album']}
-Year: {concept.get('year', '2025')}
+Year: {concept.get('year', '2023')}
 Genre: {concept.get('genre', 'Underground Rap')}
 Vibe: {concept.get('vibe', '')}
 
 Requirements:
-- Mention the artist and album
+- MUST credit the artist by name, e.g. "by {concept['artist']}" or "Artist: {concept['artist']}"
+- Mention the album title
 - 1 sentence why it's dope
 - Add #808dystopia and #undergroundrap
-- Keep under 150 characters
+- Keep under 200 characters
 """
         response = client.chat.completions.create(
             model="deepseek-chat",
             messages=[
                 {
                     "role": "system",
-                    "content": "You write hype descriptions for underground rap on Pinterest. Keep it short and catchy.",
+                    "content": "You write hype descriptions for underground rap on Pinterest. Always credit the artist by name. Keep it short and catchy.",
                 },
                 {"role": "user", "content": prompt},
             ],
         )
-        description = response.choices[0].message.content or ""
-        if concept["artist"] not in description:
-            description = f"{concept['artist']} - {concept['album']} • {description}"
+        description = (response.choices[0].message.content or "").strip()
+        # Guarantee the artist is credited even if the model forgets.
+        if concept["artist"].lower() not in description.lower():
+            description = f"by {concept['artist']} — {description}"
+        if concept["album"].lower() not in description.lower():
+            description = f"{concept['album']} {description}"
         return description[:200]
     except Exception as e:
         print(f"AI description failed: {e}")
-        return f"{concept['artist']} - {concept['album']} • Underground heat. #808dystopia #undergroundrap"
+        return f"{concept['album']} by {concept['artist']} • Underground heat. #808dystopia #undergroundrap"
 
 
 def post_to_pinterest(concept, description, cover_url):
@@ -263,13 +284,11 @@ def daily_post():
 if __name__ == "__main__":
     threading.Thread(target=start_health_server, daemon=True).start()
 
-    # 808 Pinterest cadence: 10am / 2pm / 7pm. Set TZ=America/Chicago on Render.
-    schedule.every().day.at("10:00").do(daily_post)
-    schedule.every().day.at("14:00").do(daily_post)
-    schedule.every().day.at("19:00").do(daily_post)
+    # 808 Pinterest cadence: 9:00 AM daily. Set TZ=America/Chicago on Render.
+    schedule.every().day.at("09:00").do(daily_post)
 
     print("808DYSTOPIA BOT IS RUNNING")
-    print("Scheduled 10:00 / 14:00 / 19:00")
+    print("Scheduled 09:00 daily (America/Chicago)")
     print("Running one test post now...")
     daily_post()
 
