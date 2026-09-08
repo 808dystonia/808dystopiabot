@@ -1,4 +1,3 @@
-composio-core
 openai
 python-dotenv
 schedule

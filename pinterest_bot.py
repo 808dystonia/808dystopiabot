@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from dotenv import load_dotenv
 import schedule
-from composio import ComposioToolSet, App
+import requests
 from openai import OpenAI
 
 load_dotenv()
@@ -17,11 +17,12 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 BOARD_ID = os.getenv("PINTEREST_BOARD_ID", "1099230290240885517")
 SITE_URL = os.getenv("SITE_URL", "https://808dystopia.win")
+COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
+COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 
 if not COMPOSIO_API_KEY:
     raise SystemExit("Missing COMPOSIO_API_KEY. Set it in Render Environment, not in the repo.")
 
-composio_toolset = ComposioToolSet(api_key=COMPOSIO_API_KEY)
 client = OpenAI(
     api_key=OPENAI_API_KEY,
     base_url="https://api.deepseek.com/v1",
@@ -59,6 +60,29 @@ def start_health_server():
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
     print(f"Health server on port {port}")
     server.serve_forever()
+
+
+def execute_composio_tool(slug, arguments, user_id=None):
+    """Call Composio REST v3.1. Avoids the dead composio-core SDK (HTTP 410)."""
+    url = f"{COMPOSIO_BASE}/tools/execute/{slug}"
+    payload = {
+        "arguments": arguments or {},
+        "user_id": user_id or COMPOSIO_USER_ID,
+        "version": "latest",
+    }
+    headers = {
+        "x-api-key": COMPOSIO_API_KEY,
+        "Content-Type": "application/json",
+    }
+    print(f"Composio execute {slug}")
+    resp = requests.post(url, headers=headers, json=payload, timeout=60)
+    if resp.status_code >= 400:
+        print(f"Composio {slug} HTTP {resp.status_code}: {resp.text[:500]}")
+        resp.raise_for_status()
+    try:
+        return resp.json()
+    except ValueError:
+        return {"raw": resp.text}
 
 
 def generate_album_concept():
@@ -132,8 +156,27 @@ def is_usable_cover(url, title=""):
     return True
 
 
+def extract_images(payload):
+    if not payload:
+        return []
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if data is None and isinstance(payload, dict):
+        data = payload
+    if not isinstance(data, dict):
+        return []
+    images = (
+        data.get("images_results")
+        or data.get("results", {}).get("images_results")
+        or data.get("results")
+        or []
+    )
+    if isinstance(images, dict):
+        images = images.get("images_results") or []
+    return images if isinstance(images, list) else []
+
+
 def find_cover_image(concept):
-    """Search Google Images (via Composio) for a real underground rap album cover."""
+    """Search Google Images (via Composio REST) for a real underground rap album cover."""
     try:
         print("Searching Google Images for a real album cover...")
         artist = concept.get("artist", "")
@@ -151,39 +194,21 @@ def find_cover_image(concept):
                 continue
             seen.add(q)
             try:
-                response = composio_toolset.execute_tool_calls(
-                    tool_calls=[{
-                        "function": {
-                            "name": "COMPOSIO_SEARCH_IMAGE",
-                            "arguments": {"query": q, "num": 10},
-                        }
-                    }]
+                response = execute_composio_tool(
+                    "COMPOSIO_SEARCH_IMAGE",
+                    {"query": q, "num": 10},
                 )
             except Exception as e:
                 print(f"Image search error for '{q}': {e}")
                 continue
 
-            images = []
-            if isinstance(response, dict):
-                data = response.get("data") or response
-                images = (data.get("images_results")
-                          or data.get("results", {}).get("images_results")
-                          or [])
-            elif isinstance(response, list):
-                for entry in response:
-                    if isinstance(entry, dict):
-                        data = entry.get("data") or entry
-                        images = (data.get("images_results")
-                                  or data.get("results", {}).get("images_results")
-                                  or [])
-                        if images:
-                            break
-
-            for img in images:
-                url = img.get("original") or img.get("thumbnail")
+            for img in extract_images(response):
+                if not isinstance(img, dict):
+                    continue
+                url = img.get("original") or img.get("thumbnail") or img.get("url")
                 title = img.get("title", "")
                 if is_usable_cover(url, title):
-                    print(f"Found cover: {url} (from: {title[:60]})")
+                    print(f"Found cover: {url} (from: {str(title)[:60]})")
                     return url
 
         print("No usable cover found in Google Images.")
@@ -221,7 +246,6 @@ Requirements:
             ],
         )
         description = (response.choices[0].message.content or "").strip()
-        # Guarantee the artist is credited even if the model forgets.
         if concept["artist"].lower() not in description.lower():
             description = f"by {concept['artist']} — {description}"
         if concept["album"].lower() not in description.lower():
@@ -239,22 +263,18 @@ def post_to_pinterest(concept, description, cover_url):
             print("No cover URL. Skipping pin instead of posting a placeholder.")
             return None
 
-        response = composio_toolset.execute_tool_calls(
-            tool_calls=[{
-                "function": {
-                    "name": "PINTEREST_CREATE_PIN",
-                    "arguments": {
-                        "board_id": BOARD_ID,
-                        "title": f"{concept['artist']} - {concept['album']}",
-                        "description": description,
-                        "link": SITE_URL,
-                        "media_source": {
-                            "source_type": "image_url",
-                            "url": cover_url,
-                        },
-                    },
-                }
-            }]
+        response = execute_composio_tool(
+            "PINTEREST_CREATE_PIN",
+            {
+                "board_id": BOARD_ID,
+                "title": f"{concept['artist']} - {concept['album']}",
+                "description": description,
+                "link": SITE_URL,
+                "media_source": {
+                    "source_type": "image_url",
+                    "url": cover_url,
+                },
+            },
         )
         print(f"POSTED: {concept['artist']} - {concept['album']}")
         return response
@@ -267,16 +287,19 @@ def daily_post():
     print("=" * 50)
     print(f"808DYSTOPIA BOT ACTIVATED - {datetime.now()}")
     print("=" * 50)
-    concept = generate_album_concept()
-    print(f"Concept: {concept['artist']} - {concept['album']} ({concept.get('genre', '')})")
-    cover_url = find_cover_image(concept)
-    description = create_description(concept)
-    print(f"Description: {description[:100]}...")
-    result = post_to_pinterest(concept, description, cover_url)
-    if result:
-        print("SUCCESS")
-    else:
-        print("Failed to post")
+    try:
+        concept = generate_album_concept()
+        print(f"Concept: {concept['artist']} - {concept['album']} ({concept.get('genre', '')})")
+        cover_url = find_cover_image(concept)
+        description = create_description(concept)
+        print(f"Description: {description[:100]}...")
+        result = post_to_pinterest(concept, description, cover_url)
+        if result:
+            print("SUCCESS")
+        else:
+            print("Failed to post")
+    except Exception as e:
+        print(f"daily_post crashed: {e}")
     print("-" * 50)
 
 
