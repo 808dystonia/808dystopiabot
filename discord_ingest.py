@@ -1,9 +1,6 @@
-"""Watch #admin-general for video attachments and archive them.
+"""Watch #admin-general for video attachments.
 
-Flow:
-1. 7 PM picker posts an IG Reel link.
-2. FRZA or STOKELY reply in that channel with the saved .mp4 attached.
-3. This job downloads the attachment and sends it to Drive History Posts.
+Someone attaches the mp4 → crop/host → post hosted clip in Discord → IG if flag on.
 """
 from __future__ import annotations
 
@@ -13,11 +10,13 @@ from pathlib import Path
 
 import requests
 
+from reel_media import crop_to_916, host_mp4
+from reel_publish import publish_reel
+
 COMPOSIO_API_KEY = os.getenv("COMPOSIO_API_KEY")
 COMPOSIO_USER_ID = os.getenv("COMPOSIO_USER_ID", "default")
 COMPOSIO_BASE = os.getenv("COMPOSIO_BASE_URL", "https://backend.composio.dev/api/v3.1")
 ADMIN_CHANNEL_ID = os.getenv("DISCORD_ADMIN_CHANNEL_ID", "1542355862079807509")
-DRIVE_HISTORY = os.getenv("DRIVE_HISTORY_FOLDER_ID", "1lKG3gWXAnvzVVlQdO89z4VrROjHhxMNP")
 SEEN_FILE = Path(os.getenv("DISCORD_INGEST_SEEN", "/tmp/808_discord_ingest_seen.json"))
 WORKDIR = Path("/tmp/808reels/discord")
 VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".webm"}
@@ -63,6 +62,7 @@ def ingest_admin_videos():
         if not isinstance(msg, dict):
             continue
         mid = str(msg.get("id") or "")
+        caption = (msg.get("content") or "Follow for more.")[:900]
         for att in msg.get("attachments") or []:
             if not isinstance(att, dict):
                 continue
@@ -82,22 +82,11 @@ def ingest_admin_videos():
             r = requests.get(url, timeout=120)
             r.raise_for_status()
             dest.write_bytes(r.content)
-            size = dest.stat().st_size
-            note = f"saved {name} ({size} bytes)"
-            # Composio Drive upload cap is 5MB. Keep the local file either way.
-            if size <= 5 * 1024 * 1024:
-                note += " — under 5MB, Drive upload from Render needs GOOGLEDRIVE connection on that key"
-            else:
-                note += " — over Composio 5MB Drive cap; file kept for crop/host"
-            execute(
-                "DISCORDBOT_CREATE_MESSAGE",
-                {
-                    "channel_id": ADMIN_CHANNEL_ID,
-                    "content": f"808 ingest: {note}\nfrom message {mid}\nDrive folder History Posts `{DRIVE_HISTORY}`",
-                },
-            )
+            cropped, _info = crop_to_916(dest, WORKDIR / f"{dest.stem}_916.mp4")
+            hosted = host_mp4(cropped)
+            publish_reel(hosted, caption if caption.strip() else f"{name}\nFollow for more.")
             seen.add(aid)
-            saved.append(str(dest))
+            saved.append(hosted)
     save_seen(seen)
     return saved
 
