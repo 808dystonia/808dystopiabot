@@ -1,4 +1,6 @@
-"""Genius-only lyrics + annotation for 808 single slides."""
+"""Genius-only lyrics + annotation for 808 single slides.
+Tracklists come from Genius search dumps, never invented by the LLM.
+"""
 from __future__ import annotations
 
 import json
@@ -17,6 +19,111 @@ def _search(query):
     except Exception as e:
         print(f"genius search: {e}", flush=True)
         return {}
+
+
+def _split_feat(name):
+    name = re.sub(r"\s+", " ", (name or "").strip())
+    name = re.sub(r"^\d{1,2}\s*[.)-]?\s*", "", name)
+    m = re.search(
+        r"^(.*?)(?:\s*[\(\[]\s*(?:feat\.?|ft\.?|featuring)\s+([^\)\]]+)[\)\]]|\s+feat\.?\s+(.+))$",
+        name,
+        re.I,
+    )
+    if not m:
+        return name[:40], ""
+    feat = (m.group(2) or m.group(3) or "").strip(" -")
+    return m.group(1).strip(" -")[:40], feat[:24]
+
+
+def _parse_tracks_from_text(blob):
+    tracks = []
+    seen = set()
+    for line in (blob or "").splitlines():
+        line = line.strip().strip("-•*")
+        m = re.match(r"^(?:track\s*)?(\d{1,2})\s*[.)\-:]\s+(.+)$", line, re.I)
+        if not m:
+            m = re.match(r"^(\d{1,2})\s{2,}(.+)$", line)
+        if not m:
+            continue
+        raw_name = m.group(2).strip()
+        if len(raw_name) < 2:
+            continue
+        low = raw_name.lower()
+        if any(b in low for b in ("lyrics", "annotation", "about this", "read more", "contributors")):
+            continue
+        name, feat = _split_feat(raw_name)
+        key = re.sub(r"[^a-z0-9]+", "", name.lower())
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        tracks.append({"name": name, "feat": feat})
+        if len(tracks) >= 18:
+            break
+    return tracks
+
+
+def genius_tracklist(artist, title):
+    """Return verified tracks only. Empty list if Genius dump has no numbered list."""
+    empty = {"tracks": [], "source": "", "verified": False}
+    artist = artist or ""
+    title = title or ""
+    if not artist or not title:
+        return empty
+    lyrics_raw = _search(f"site:genius.com {artist} {title} lyrics")
+    album_raw = _search(f"site:genius.com {artist} {title} album tracklist")
+    packed = (
+        f"ARTIST: {artist}\nTITLE: {title}\n\n"
+        f"GENIUS LYRICS SEARCH:\n{_blob(lyrics_raw)}\n\n"
+        f"GENIUS ALBUM SEARCH:\n{_blob(album_raw)}"
+    )
+    tracks = _parse_tracks_from_text(packed)
+    if len(tracks) >= 2:
+        return {"tracks": tracks, "source": "SOURCE: GENIUS", "verified": True}
+
+    llm = get_llm_client()
+    if not llm:
+        return empty
+    try:
+        resp = llm.chat.completions.create(
+            model="deepseek-chat",
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract a tracklist ONLY if the dump contains a real numbered Genius track list. "
+                        'Return ONLY JSON: {"tracks":[{"name":"","feat":""}]}. '
+                        "Copy titles as written. feat is empty unless the dump names a feature. "
+                        "If there is no numbered list, return {\"tracks\":[]}. "
+                        "Never invent songs. Never guess a single as a fake album list."
+                    ),
+                },
+                {"role": "user", "content": packed[:7000]},
+            ],
+        )
+        raw = (resp.choices[0].message.content or "").strip()
+        if raw.startswith("```"):
+            raw = raw.strip("`").lstrip("json").strip()
+        data = json.loads(raw)
+        out = []
+        seen = set()
+        for row in data.get("tracks") or []:
+            if isinstance(row, str):
+                name, feat = _split_feat(row)
+            elif isinstance(row, dict) and row.get("name"):
+                name, feat = _split_feat(str(row.get("name") or ""))
+                feat = str(row.get("feat") or feat or "")[:24]
+            else:
+                continue
+            key = re.sub(r"[^a-z0-9]+", "", name.lower())
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append({"name": name[:40], "feat": feat[:24]})
+        if len(out) >= 2:
+            return {"tracks": out[:18], "source": "SOURCE: GENIUS", "verified": True}
+    except Exception as e:
+        print(f"genius tracklist: {e}", flush=True)
+    return empty
 
 
 def genius_brief(item):
@@ -47,7 +154,7 @@ def genius_brief(item):
                     "role": "system",
                     "content": (
                         "808 Dystopia single card. Use ONLY facts in the dump. "
-                        "Return ONLY JSON: {\"quote\":\"\",\"lines\":[\"\",\"\"],\"caption\":\"\"}. "
+                        'Return ONLY JSON: {"quote":"","lines":["",""],"caption":""}. '
                         "quote = one short lyric copied EXACTLY as Genius spells it. "
                         "If no verified Genius lyric exists, quote MUST be empty. "
                         "NEVER write that Genius is missing, that there is no page, or that there is no quote. "
