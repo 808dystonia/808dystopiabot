@@ -5,6 +5,7 @@ import time
 import random
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import urlparse, parse_qs, unquote_plus
 
 from dotenv import load_dotenv
 import schedule
@@ -45,12 +46,50 @@ UNDERGROUND_GENRES = [
 ]
 
 
+def json_bytes(payload, status=200):
+    body = json.dumps(payload).encode("utf-8")
+    return status, body
+
+
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
+        parsed = urlparse(self.path)
+        path = parsed.path.rstrip("/") or "/"
+        qs = parse_qs(parsed.query)
+
+        if path in ("/", "/health"):
+            body = b"808dystopiabot ok"
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        if path == "/cover":
+            artist = unquote_plus((qs.get("artist") or [""])[0]).strip()
+            album = unquote_plus((qs.get("album") or [""])[0]).strip()
+            q = unquote_plus((qs.get("q") or [""])[0]).strip()
+            if not q:
+                q = " ".join(p for p in (artist, album) if p)
+            if not q:
+                status, body = json_bytes({"ok": False, "error": "missing q or artist/album"}, 400)
+            else:
+                result = lookup_artist_image(q, artist=artist, album=album)
+                status, body = json_bytes(result, 200 if result.get("ok") else 404)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
+        body = b"not found"
+        self.send_response(404)
         self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(b"808dystopiabot ok")
+        self.wfile.write(body)
 
     def log_message(self, format, *args):
         return
@@ -59,7 +98,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 def start_health_server():
     port = int(os.getenv("PORT", "10000"))
     server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    print(f"Health server on port {port}")
+    print(f"Health server on port {port}", flush=True)
     server.serve_forever()
 
 
@@ -77,7 +116,6 @@ def get_llm_client():
 
 
 def execute_composio_tool(slug, arguments, user_id=None):
-    """Call Composio REST v3.1. Avoids the dead composio-core SDK (HTTP 410)."""
     if not COMPOSIO_API_KEY:
         raise RuntimeError("Missing COMPOSIO_API_KEY in Render Environment")
     url = f"{COMPOSIO_BASE}/tools/execute/{slug}"
@@ -90,10 +128,10 @@ def execute_composio_tool(slug, arguments, user_id=None):
         "x-api-key": COMPOSIO_API_KEY,
         "Content-Type": "application/json",
     }
-    print(f"Composio execute {slug}")
+    print(f"Composio execute {slug}", flush=True)
     resp = requests.post(url, headers=headers, json=payload, timeout=60)
     if resp.status_code >= 400:
-        print(f"Composio {slug} HTTP {resp.status_code}: {resp.text[:500]}")
+        print(f"Composio {slug} HTTP {resp.status_code}: {resp.text[:500]}", flush=True)
         resp.raise_for_status()
     try:
         return resp.json()
@@ -102,15 +140,14 @@ def execute_composio_tool(slug, arguments, user_id=None):
 
 
 def generate_album_concept():
-    """Pick a real underground hip-hop/rap artist and album to feature."""
     seed_artist = random.choice(UNDERGROUND_ARTISTS)
     seed_genre = random.choice(UNDERGROUND_GENRES)
     llm = get_llm_client()
     if llm is None:
-        print("No OPENAI_API_KEY / DEEPSEEK_API_KEY. Using backup album.")
+        print("No OPENAI_API_KEY / DEEPSEEK_API_KEY. Using backup album.", flush=True)
         return random.choice(BACKUP_ALBUMS)
     try:
-        print("DeepSeek selecting underground hip-hop/rap album...")
+        print("DeepSeek selecting underground hip-hop/rap album...", flush=True)
         prompt = f"""You are curating an underground hip-hop and rap Pinterest board.
 Pick ONE real, existing underground hip-hop or rap artist and ONE of their real albums or mixtapes.
 Seed artist hint: {seed_artist}
@@ -149,11 +186,10 @@ Rules:
         concept["genre"] = str(concept.get("genre", seed_genre))[:40]
         concept["vibe"] = str(concept.get("vibe", ""))[:120]
         concept["cover_prompt"] = str(concept.get("cover_prompt", ""))[:200]
-        print(f"Concept: {concept['artist']} - {concept['album']}")
+        print(f"Concept: {concept['artist']} - {concept['album']}", flush=True)
         return concept
     except Exception as e:
-        print(f"DeepSeek concept generation failed: {e}")
-        print("Falling back to backup album...")
+        print(f"DeepSeek concept generation failed: {e}", flush=True)
         return random.choice(BACKUP_ALBUMS)
 
 
@@ -163,12 +199,19 @@ def is_usable_cover(url, title=""):
     low = url.lower()
     if not low.startswith("http"):
         return False
-    bad_ext = (".svg", ".gif", "logo", "icon", "sprite", "button", "avatar")
-    if any(b in low for b in bad_ext):
+    bad = (".svg", ".gif", "logo", "icon", "sprite", "button", "avatar", "lookaside.instagram")
+    if any(b in low for b in bad):
         return False
     if "s=10" in low or "s=0" in low:
         return False
     return True
+
+
+def source_rank(url, source="", title=""):
+    blob = f"{url} {source} {title}".lower()
+    if "i.pinimg.com" in blob or "pinimg.com" in blob or "pinterest.com" in blob:
+        return 0
+    return 1
 
 
 def extract_images(payload):
@@ -190,45 +233,77 @@ def extract_images(payload):
     return images if isinstance(images, list) else []
 
 
+def search_image_query(q):
+    response = execute_composio_tool("COMPOSIO_SEARCH_IMAGE", {"query": q, "num": 10})
+    hits = []
+    for img in extract_images(response):
+        if not isinstance(img, dict):
+            continue
+        url = img.get("original") or img.get("thumbnail") or img.get("url")
+        title = img.get("title", "")
+        source = img.get("source", "")
+        if is_usable_cover(url, title):
+            hits.append({
+                "url": url,
+                "title": title,
+                "source": source,
+                "rank": source_rank(url, source, title),
+            })
+    hits.sort(key=lambda h: h["rank"])
+    return hits
+
+
+def lookup_artist_image(q, artist="", album=""):
+    """Pinterest first, Google second. Never generates an image."""
+    queries = []
+    base = q.strip()
+    if artist and album:
+        queries.append(f"{artist} {album} album cover site:pinterest.com")
+        queries.append(f"{artist} {album} site:pinterest.com")
+    queries.append(f"{base} album cover site:pinterest.com")
+    if artist and album:
+        queries.append(f"{artist} {album} album cover art")
+    queries.append(f"{base} album cover art")
+    queries.append(f"{base} press photo")
+
+    seen_q = set()
+    last_err = None
+    for query in queries:
+        query = " ".join(query.split())
+        if query in seen_q:
+            continue
+        seen_q.add(query)
+        try:
+            hits = search_image_query(query)
+        except Exception as e:
+            last_err = str(e)
+            print(f"cover search fail '{query}': {e}", flush=True)
+            continue
+        if not hits:
+            continue
+        best = hits[0]
+        origin = "pinterest" if best["rank"] == 0 else "google"
+        print(f"cover {origin}: {best['url']}", flush=True)
+        return {
+            "ok": True,
+            "url": best["url"],
+            "source": origin,
+            "title": best.get("title") or "",
+            "query": query,
+        }
+    return {"ok": False, "error": last_err or "no usable photo", "query": q}
+
+
 def find_cover_image(concept):
     try:
-        print("Searching Google Images for a real album cover...")
         artist = concept.get("artist", "")
         album = concept.get("album", "")
-        queries = [
-            f"{artist} {album} album cover art",
-            f"{artist} {album} cover underground hip hop",
-            f"{concept.get('genre', 'underground rap')} album cover art {artist}",
-            f"{artist} mixtape cover art hip hop",
-        ]
-        seen = set()
-        for q in queries:
-            q = q.strip()
-            if not q or q in seen:
-                continue
-            seen.add(q)
-            try:
-                response = execute_composio_tool(
-                    "COMPOSIO_SEARCH_IMAGE",
-                    {"query": q, "num": 10},
-                )
-            except Exception as e:
-                print(f"Image search error for '{q}': {e}")
-                continue
-
-            for img in extract_images(response):
-                if not isinstance(img, dict):
-                    continue
-                url = img.get("original") or img.get("thumbnail") or img.get("url")
-                title = img.get("title", "")
-                if is_usable_cover(url, title):
-                    print(f"Found cover: {url} (from: {str(title)[:60]})")
-                    return url
-
-        print("No usable cover found in Google Images.")
+        result = lookup_artist_image(f"{artist} {album}", artist=artist, album=album)
+        if result.get("ok"):
+            return result["url"]
         return None
     except Exception as e:
-        print(f"Cover search error: {e}")
+        print(f"Cover search error: {e}", flush=True)
         return None
 
 
@@ -238,7 +313,7 @@ def create_description(concept):
     if llm is None:
         return fallback
     try:
-        print("Writing description...")
+        print("Writing description...", flush=True)
         prompt = f"""Write a short, hype Pinterest description for this underground rap album:
 Artist: {concept['artist']}
 Album: {concept['album']}
@@ -270,17 +345,16 @@ Requirements:
             description = f"{concept['album']} {description}"
         return description[:200]
     except Exception as e:
-        print(f"AI description failed: {e}")
+        print(f"AI description failed: {e}", flush=True)
         return fallback
 
 
 def post_to_pinterest(concept, description, cover_url):
     try:
-        print("Posting to Pinterest...")
+        print("Posting to Pinterest...", flush=True)
         if not cover_url:
-            print("No cover URL. Skipping pin instead of posting a placeholder.")
+            print("No cover URL. Skipping pin instead of posting a placeholder.", flush=True)
             return None
-
         response = execute_composio_tool(
             "PINTEREST_CREATE_PIN",
             {
@@ -294,31 +368,25 @@ def post_to_pinterest(concept, description, cover_url):
                 },
             },
         )
-        print(f"POSTED: {concept['artist']} - {concept['album']}")
+        print(f"POSTED: {concept['artist']} - {concept['album']}", flush=True)
         return response
     except Exception as e:
-        print(f"Pinterest error: {e}")
+        print(f"Pinterest error: {e}", flush=True)
         return None
 
 
 def daily_post():
-    print("=" * 50)
-    print(f"808DYSTOPIA BOT ACTIVATED - {datetime.now()}")
-    print("=" * 50)
+    print("=" * 50, flush=True)
+    print(f"808DYSTOPIA BOT ACTIVATED - {datetime.now()}", flush=True)
     try:
         concept = generate_album_concept()
-        print(f"Concept: {concept['artist']} - {concept['album']} ({concept.get('genre', '')})")
         cover_url = find_cover_image(concept)
         description = create_description(concept)
-        print(f"Description: {description[:100]}...")
         result = post_to_pinterest(concept, description, cover_url)
-        if result:
-            print("SUCCESS")
-        else:
-            print("Failed to post")
+        print("SUCCESS" if result else "Failed to post", flush=True)
     except Exception as e:
-        print(f"daily_post crashed: {e}")
-    print("-" * 50)
+        print(f"daily_post crashed: {e}", flush=True)
+    print("-" * 50, flush=True)
 
 
 if __name__ == "__main__":
@@ -326,15 +394,14 @@ if __name__ == "__main__":
     time.sleep(0.3)
 
     if not COMPOSIO_API_KEY:
-        print("WARNING: COMPOSIO_API_KEY is not set in Render Environment")
+        print("WARNING: COMPOSIO_API_KEY is not set in Render Environment", flush=True)
     if not OPENAI_API_KEY:
-        print("WARNING: OPENAI_API_KEY / DEEPSEEK_API_KEY is not set. Descriptions will use the fallback template.")
+        print("WARNING: OPENAI_API_KEY / DEEPSEEK_API_KEY is not set.", flush=True)
 
     schedule.every().day.at("09:00").do(daily_post)
-
-    print("808DYSTOPIA BOT IS RUNNING")
-    print("Scheduled 09:00 daily (America/Chicago)")
-    print("Running one test post now...")
+    print("808DYSTOPIA BOT IS RUNNING", flush=True)
+    print("Cover API: GET /cover?artist=NAME&album=TITLE", flush=True)
+    print("Running one test post now...", flush=True)
     daily_post()
 
     while True:
