@@ -1,8 +1,5 @@
 """9:00 AM CT IG news carousel on Render. No Grok.
-
-Pull Morning Heat → unused album/EP → real photo (Pinterest/Google)
-→ two 1080x1350 slides → Discord stage → IG if CAROUSEL_PUBLISH=1.
-Skip the slot if nothing unused. Never AI covers.
+Type lock: Capture It (Phonto face) from Drive Fonts.
 """
 from __future__ import annotations
 
@@ -15,7 +12,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import requests
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont
 
 from pinterest_bot import execute_composio_tool, lookup_artist_image
 from reel_publish import announce_discord
@@ -30,6 +27,8 @@ CT = ZoneInfo("America/Chicago")
 W, H = 1080, 1350
 USED_SEED = ["karrahbooo", "not da 2", "lazer dim 700", "ld7"]
 NEWS_TMPL_ID = "1SmfujfYpPF20OX-hBoozPPPXQl8EZ3pl"
+FONT_FILE_ID = os.getenv("CAROUSEL_FONT_ID", "1m7Ev0SCglKj70M87QnsOpcLubXNAppzN")
+FONT_CACHE = WORKDIR / "Capture_it.ttf"
 UGUU = "https://uguu.se/upload"
 HASHTAGS = [
     "#808Dystopia #UndergroundRap #UndergroundHipHop #HipHopHistory",
@@ -52,15 +51,40 @@ def slugify(text):
     return re.sub(r"[^a-z0-9]+", "", (text or "").lower())
 
 
+def download_drive(file_id, dest: Path):
+    raw = execute_composio_tool("GOOGLEDRIVE_DOWNLOAD_FILE", {"fileId": file_id})
+    data = raw.get("data") if isinstance(raw, dict) else {}
+    content = data.get("downloaded_file_content") or {}
+    s3 = content.get("s3url") or data.get("s3url")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not s3:
+        raise RuntimeError("no drive download")
+    dest.write_bytes(requests.get(s3, timeout=60).content)
+    return dest
+
+
+def font_path():
+    WORKDIR.mkdir(parents=True, exist_ok=True)
+    if FONT_CACHE.exists() and FONT_CACHE.stat().st_size > 10000:
+        return FONT_CACHE
+    try:
+        download_drive(FONT_FILE_ID, FONT_CACHE)
+        return FONT_CACHE
+    except Exception as e:
+        print(f"font drive: {e}", flush=True)
+        return None
+
+
 def font(size, bold=True):
-    paths = [
+    p = font_path()
+    if p:
+        return ImageFont.truetype(str(p), size)
+    for fallback in (
         "/usr/share/fonts/truetype/dejavu/DejaVuSansCondensed-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    ]
-    for p in paths:
-        if Path(p).exists():
-            return ImageFont.truetype(p, size)
+    ):
+        if Path(fallback).exists():
+            return ImageFont.truetype(fallback, size)
     return ImageFont.load_default()
 
 
@@ -77,18 +101,6 @@ def fit_text(draw, text, max_w, start, min_size=36):
 
 def stroke_text(draw, xy, text, fnt, fill="white", stroke="black", width=3):
     draw.text(xy, text, font=fnt, fill=fill, stroke_width=width, stroke_fill=stroke)
-
-
-def download_drive(file_id, dest: Path):
-    raw = execute_composio_tool("GOOGLEDRIVE_DOWNLOAD_FILE", {"fileId": file_id})
-    data = raw.get("data") if isinstance(raw, dict) else {}
-    content = data.get("downloaded_file_content") or {}
-    s3 = content.get("s3url") or data.get("s3url")
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if not s3:
-        raise RuntimeError("no template download")
-    dest.write_bytes(requests.get(s3, timeout=60).content)
-    return dest
 
 
 def template():
@@ -133,7 +145,7 @@ def render_slide1(artist, hook, photo: Image.Image):
     hook_f = fit_text(draw, hook.upper(), 980, 72)
     hb = draw.textbbox((0, 0), hook.upper(), font=hook_f)
     hx = (W - (hb[2] - hb[0])) // 2
-    fill = "#E10600" if '"' in hook or "“" in hook else "white"
+    fill = "#E10600" if '"' in hook or "\u201c" in hook else "white"
     stroke_text(draw, (hx, 900), hook.upper(), hook_f, fill, "black", 3)
     out = WORKDIR / "slide1.jpg"
     base.save(out, quality=92)
@@ -151,14 +163,12 @@ def render_slide2(title, tracks, photo: Image.Image):
     y = 190
     body = font(28)
     for i, track in enumerate(tracks[:16], 1):
-        num = f"{i:02d}"
-        draw.text((40, y), num, font=body, fill="#E10600")
+        draw.text((40, y), f"{i:02d}", font=body, fill="#E10600")
         draw.text((110, y), track.upper()[:28], font=body, fill="white")
         y += 42
     thumb = cover_box(photo, (0, 0, 360, 360))
     img.paste(thumb, (680, 40))
-    foot = font(22)
-    draw.text((40, 1260), "SWIPE", font=foot, fill="white")
+    draw.text((40, 1260), "SWIPE", font=font(22), fill="white")
     out = WORKDIR / "slide2.jpg"
     img.save(out, quality=92)
     return out
@@ -223,11 +233,7 @@ def pick_article():
 
 
 def caption(item):
-    return (
-        f"{item['line']}\n\n"
-        f"Credit {item['artist']}\n"
-        f"Follow for more."
-    )[:900]
+    return f"{item['line']}\n\nCredit {item['artist']}\nFollow for more."[:900]
 
 
 def publish_carousel(urls, text):
@@ -235,11 +241,7 @@ def publish_carousel(urls, text):
     for url in urls:
         created = execute_composio_tool(
             "INSTAGRAM_POST_IG_USER_MEDIA",
-            {
-                "ig_user_id": IG_USER_ID,
-                "image_url": url,
-                "is_carousel_item": True,
-            },
+            {"ig_user_id": IG_USER_ID, "image_url": url, "is_carousel_item": True},
         )
         data = created.get("data") if isinstance(created, dict) else {}
         cid = data.get("id")
@@ -248,15 +250,9 @@ def publish_carousel(urls, text):
         children.append(cid)
     parent = execute_composio_tool(
         "INSTAGRAM_POST_IG_USER_MEDIA",
-        {
-            "ig_user_id": IG_USER_ID,
-            "media_type": "CAROUSEL",
-            "children": children,
-            "caption": text,
-        },
+        {"ig_user_id": IG_USER_ID, "media_type": "CAROUSEL", "children": children, "caption": text},
     )
-    pdata = parent.get("data") if isinstance(parent, dict) else {}
-    creation = pdata.get("id")
+    creation = (parent.get("data") or {}).get("id")
     published = execute_composio_tool(
         "INSTAGRAM_POST_IG_USER_MEDIA_PUBLISH",
         {"ig_user_id": IG_USER_ID, "creation_id": creation, "max_wait_seconds": 180},
@@ -265,10 +261,7 @@ def publish_carousel(urls, text):
     if media_id:
         for batch in HASHTAGS:
             try:
-                execute_composio_tool(
-                    "INSTAGRAM_POST_IG_MEDIA_COMMENTS",
-                    {"ig_media_id": media_id, "message": batch},
-                )
+                execute_composio_tool("INSTAGRAM_POST_IG_MEDIA_COMMENTS", {"ig_media_id": media_id, "message": batch})
             except Exception as e:
                 print(f"comment: {e}", flush=True)
     return media_id
@@ -289,16 +282,12 @@ def run_carousel_job():
     photo = fetch_photo(cover["url"])
     hook = f'DROPS "{item["title"]}"'
     s1 = render_slide1(item["artist"], hook, photo)
-    tracks = [item["title"], "MORE INFO ON SLIDE 1"]
-    s2 = render_slide2(item["title"], tracks, photo)
+    s2 = render_slide2(item["title"], [item["title"], "MORE INFO ON SLIDE 1"], photo)
     u1, u2 = host_image(s1), host_image(s2)
     cap = caption(item)
     announce_discord(
-        f"808 carousel staged {now}\n"
-        f"{item['artist']} — {item['title']}\n"
-        f"photo: {cover.get('source')}\n"
-        f"{u1}\n{u2}\n\n{cap}\n\n"
-        f"publish={'ON' if PUBLISH else 'OFF'}"
+        f"808 carousel staged {now}\n{item['artist']} — {item['title']}\n"
+        f"photo: {cover.get('source')}\n{u1}\n{u2}\n\n{cap}\n\npublish={'ON' if PUBLISH else 'OFF'}"
     )
     used = load_used()
     used.add(key)
