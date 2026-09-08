@@ -27,9 +27,6 @@ client = OpenAI(
     base_url="https://api.deepseek.com/v1",
 )
 
-youtube_tools = composio_toolset.get_tools(apps=[App.YOUTUBE])
-pinterest_tools = composio_toolset.get_tools(apps=[App.PINTEREST])
-
 BACKUP_ALBUMS = [
     {"artist": "MIKE", "album": "Disco!", "year": "2023", "genre": "Abstract Hip-Hop"},
     {"artist": "Earl Sweatshirt", "album": "Some Rap Songs", "year": "2018", "genre": "Experimental Rap"},
@@ -105,50 +102,78 @@ Make it sound like real underground hip-hop: gritty, specific, interesting. Vary
         return random.choice(BACKUP_ALBUMS)
 
 
+def is_usable_cover(url, title=""):
+    """Filter out junk: tiny thumbs, logos, non-image pages, obvious non-covers."""
+    if not url or not isinstance(url, str):
+        return False
+    low = url.lower()
+    if not low.startswith("http"):
+        return False
+    bad_ext = (".svg", ".gif", "logo", "icon", "sprite", "button", "avatar")
+    if any(b in low for b in bad_ext):
+        return False
+    # Prefer square-ish or large images; skip obvious tiny thumbs
+    if "s=10" in low or "s=0" in low:
+        return False
+    return True
+
+
 def find_cover_image(concept):
-    """Search YouTube for a cover-like image matching the concept's vibe."""
+    """Search Google Images (via Composio) for a real underground rap album cover."""
     try:
-        print("Searching YouTube for a matching cover image...")
-        query = f"{concept.get('genre', 'underground rap')} album cover art {concept.get('vibe', '')[:40]}"
-        response = composio_toolset.execute_tool_calls(
-            tool_calls=[{
-                "function": {
-                    "name": "YOUTUBE_SEARCH_YOU_TUBE",
-                    "arguments": {
-                        "q": query,
-                        "maxResults": 10,
-                        "type": "video",
-                    },
-                }
-            }]
-        )
+        print("Searching Google Images for a real album cover...")
+        queries = [
+            f"{concept.get('artist', '')} {concept.get('album', '')} album cover art",
+            f"{concept.get('genre', 'underground rap')} album cover art underground hip hop",
+            f"underground rap mixtape cover art {concept.get('vibe', '')[:30]}",
+            "underground hip hop album cover art real",
+        ]
+        seen = set()
+        for q in queries:
+            q = q.strip()
+            if not q or q in seen:
+                continue
+            seen.add(q)
+            try:
+                response = composio_toolset.execute_tool_calls(
+                    tool_calls=[{
+                        "function": {
+                            "name": "COMPOSIO_SEARCH_IMAGE",
+                            "arguments": {"query": q, "num": 10},
+                        }
+                    }]
+                )
+            except Exception as e:
+                print(f"Image search error for '{q}': {e}")
+                continue
 
-        items = []
-        if isinstance(response, dict):
-            data = response.get("data") or response
-            items = data.get("items") or []
-        elif isinstance(response, list):
-            for entry in response:
-                if isinstance(entry, dict):
-                    data = entry.get("data") or entry
-                    if data.get("items"):
-                        items = data["items"]
-                        break
+            images = []
+            if isinstance(response, dict):
+                data = response.get("data") or response
+                images = (data.get("images_results")
+                          or data.get("results", {}).get("images_results")
+                          or [])
+            elif isinstance(response, list):
+                for entry in response:
+                    if isinstance(entry, dict):
+                        data = entry.get("data") or entry
+                        images = (data.get("images_results")
+                                  or data.get("results", {}).get("images_results")
+                                  or [])
+                        if images:
+                            break
 
-        for item in items:
-            thumbnails = (item.get("snippet") or {}).get("thumbnails", {})
-            cover_url = (
-                thumbnails.get("high", {}).get("url")
-                or thumbnails.get("medium", {}).get("url")
-                or thumbnails.get("default", {}).get("url")
-            )
-            if cover_url:
-                return cover_url
+            for img in images:
+                url = img.get("original") or img.get("thumbnail")
+                title = img.get("title", "")
+                if is_usable_cover(url, title):
+                    print(f"Found cover: {url} (from: {title[:60]})")
+                    return url
 
-        print("YouTube returned no usable cover, using backup...")
+        print("No usable cover found in Google Images.")
         return None
     except Exception as e:
-        print(f"YouTube cover search error: {e}")
+        print(f"Cover search error: {e}")
         return None
 
 
